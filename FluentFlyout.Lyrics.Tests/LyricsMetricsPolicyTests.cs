@@ -145,6 +145,75 @@ public sealed class LyricsMetricsPolicyTests
         Assert.True(metrics.TotalHeight <= LyricsMetricsPolicy.DefaultTaskbarCrossSize);
     }
 
+    // ---------- 用户主动单行（P4-4 的单/双行开关） ----------
+
+    [Fact]
+    public void UserSingleLineForcesSingleLineOnNormalHorizontalTaskbar()
+    {
+        // 40 DIP 本来装得下两行，用户主动要求单行。
+        var auto = LyricsMetricsPolicy.Create(isVertical: false, isSmallTaskbar: false);
+        var forced = LyricsMetricsPolicy.Create(
+            isVertical: false, isSmallTaskbar: false, userSingleLine: true);
+
+        Assert.False(auto.IsSingleLine);
+        Assert.True(forced.IsSingleLine);
+    }
+
+    [Fact]
+    public void UserSingleLineAlsoAppliesOnVerticalTaskbar()
+    {
+        // 关键差异点：竖向 + 小任务栏是「系统不降级」的组合
+        // （见 VerticalSmallTaskbarDoesNotForceSingleLine），
+        // 但用户主动选单行时必须生效——那是明确意图，不是系统在替他取舍。
+        var forced = LyricsMetricsPolicy.Create(
+            isVertical: true, isSmallTaskbar: true, userSingleLine: true);
+
+        Assert.True(forced.IsSingleLine);
+    }
+
+    [Fact]
+    public void UserSingleLineReducesTotalHeight()
+    {
+        // 单行的收益是省高度：只占一行，不占两行 + 间距。
+        var twoLine = LyricsMetricsPolicy.Create(isVertical: false, isSmallTaskbar: false);
+        var oneLine = LyricsMetricsPolicy.Create(
+            isVertical: false, isSmallTaskbar: false, userSingleLine: true);
+
+        Assert.True(oneLine.TotalHeight < twoLine.TotalHeight);
+    }
+
+    [Fact]
+    public void DefaultIsNotUserSingleLine()
+    {
+        // 默认必须是「自动」：多数用户没理由主动关掉第二行，
+        // 而小任务栏的降级已经由 isSmallTaskbar 覆盖。
+        var metrics = LyricsMetricsPolicy.Create(isVertical: false, isSmallTaskbar: false);
+
+        Assert.False(metrics.IsSingleLine);
+    }
+
+    [Fact]
+    public void UserSingleLineScalesFontUpButStaysWithinAvailableHeight()
+    {
+        // 单行模式会**放大**字号（SingleLineFontScale = 1.15）：省下来的
+        // 那一行高度可以换更大的字，读起来更轻松。这是既有行为，
+        // 用户主动选单行时同样适用——不该因为「是用户选的」就取消这个收益。
+        //
+        // 这里锁两件事：确实放大了，且放大后仍装得进任务栏。
+        var twoLine = LyricsMetricsPolicy.Create(
+            isVertical: false, isSmallTaskbar: false, preferredFontSize: 15);
+        var oneLine = LyricsMetricsPolicy.Create(
+            isVertical: false, isSmallTaskbar: false, preferredFontSize: 15, userSingleLine: true);
+
+        Assert.True(
+            oneLine.FontSize > twoLine.FontSize,
+            $"单行应放大字号：双行 {twoLine.FontSize}，单行 {oneLine.FontSize}");
+
+        Assert.True(
+            oneLine.TotalHeight <= LyricsMetricsPolicy.DefaultTaskbarCrossSize,
+            $"单行总高 {oneLine.TotalHeight} 超出任务栏短边");
+    }
+
     // ---------- 边界 ----------
 
     [Theory]

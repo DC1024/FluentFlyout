@@ -60,10 +60,22 @@ public static class LyricsMetricsPolicy
     /// 150% DPI 下物理 60px 的任务栏仍是 40 DIP，不会被误判成小任务栏。
     /// </param>
     /// <param name="preferredFontSize">用户设置的字号（DIP）。</param>
+    /// <param name="userSingleLine">
+    /// 用户是否**主动**选择单行。
+    ///
+    /// 与「装不下所以降级」是两件事：
+    /// <list type="bullet">
+    /// <item>用户选单行 → 无论装不装得下都单行（P4-4 的单/双行开关）；</item>
+    /// <item>系统判定装不下 → 降级单行，用户的选择是「自动」。</item>
+    /// </list>
+    /// 两者最终都走 <see cref="LyricsPanelMetrics.Create"/> 的
+    /// <c>forceSingleLine</c>，但来源不同，所以要分开传。
+    /// </param>
     public static LyricsPanelMetrics Create(
         bool isVertical,
         bool isSmallTaskbar,
-        double preferredFontSize = DefaultPreferredFontSize)
+        double preferredFontSize = DefaultPreferredFontSize,
+        bool userSingleLine = false)
     {
         var crossSize = isSmallTaskbar ? SmallTaskbarCrossSize : DefaultTaskbarCrossSize;
 
@@ -72,14 +84,14 @@ public static class LyricsMetricsPolicy
         //   竖向 → 不受约束（见 VerticalUnconstrainedHeight）。
         var availableHeight = isVertical ? VerticalUnconstrainedHeight : crossSize;
 
-        // 只有「横向 + 小任务栏」需要强制单行。
+        // 强制单行的两个来源，任一成立就单行。
         //
-        // 横向小任务栏的约束是高度：28 DIP 装不下两行 13px 的字，
-        // 硬塞会把两行都裁掉一半，所以压成一行。
-        //
-        // 竖向的约束是宽度，靠换行解决——再压成单行等于把唯一的优势扔掉。
-        // TaskbarLyrics 在竖向任务栏上也是换行而非单行。
-        var forceSingleLine = isSmallTaskbar && !isVertical;
+        // 1. 用户主动选单行（userSingleLine）——竖向下也生效，
+        //    因为这是用户的明确意图，不是系统在替他做取舍。
+        // 2. 横向 + 小任务栏——28 DIP 装不下两行 13px 的字，
+        //    硬塞会把两行都裁掉一半，所以压成一行。
+        //    竖向的约束是宽度，靠换行解决，再压成单行等于把唯一的优势扔掉。
+        var forceSingleLine = userSingleLine || (isSmallTaskbar && !isVertical);
 
         return LyricsPanelMetrics.Create(availableHeight, preferredFontSize, forceSingleLine);
     }

@@ -7,6 +7,18 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- 配置迁移测试要直接反序列化 UserSettings，它在主工程里。
+         引用 WinExe 在 .NET 上是允许的；UseWPF 必须同步打开，
+         否则 UserSettings 引用的 WPF 类型解析不了。 -->
+    <UseWPF>true</UseWPF>
+    <Platforms>x64</Platforms>
+    <!--
+      打开 UseWPF 后 SDK 的隐式 using 集合会换成 WPF 那一套，
+      少了 System.IO 等，既有 629 个用例里大量裸写 File / Path / Directory，
+      会直接 CS0103。用 Using 项显式补回来，
+      比在几十个测试文件里挨个加 using 更安全。
+    -->
+    <ImplicitUsings>enable</ImplicitUsings>
     <!--
       程序集名与 FluentFlyout.Lyrics/AssemblyInfo.cs 里的 InternalsVisibleTo 严格对应，
       两边必须一起改，否则所有 internal 类型在测试中会变成不可见。
@@ -16,7 +28,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- UseWPF 会替换隐式 using 集合，这几个是既有用例依赖的 -->
+    <Using Include="System.IO" />
+    <Using Include="System.Linq" />
+    <Using Include="System.Threading" />
+    <Using Include="System.Threading.Tasks" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\FluentFlyout.Lyrics\FluentFlyout.Lyrics.csproj" />
+    <ProjectReference Include="..\FluentFlyoutWPF\FluentFlyout.csproj" />
   </ItemGroup>
 
   <ItemGroup>

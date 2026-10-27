@@ -82,6 +82,55 @@ public partial class LyricsPanel : UserControl
     public int DowngradeCount { get; private set; }
 
     /// <summary>
+    /// 用户是否开启翻译行（设置项）。默认开启。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="LyricsPanelMetrics.ShowTranslation"/> 的分工：
+    /// 后者是**度量层**的判断（单行模式装不下翻译，硬件上不允许），
+    /// 这里是**用户层**的偏好（双行模式装得下，但用户不想看）。
+    /// 两者取与：度量说不行就是不行，度量说行还要用户同意。
+    /// </remarks>
+    public bool ShowTranslation { get; set; } = true;
+
+    /// <summary>
+    /// 用户是否开启逐字扫描（设置项）。默认开启。
+    ///
+    /// 关掉后不进入扫描态，当前行整体高亮。这是给低端机 / 电池模式
+    /// 留的省电路径——渐变遮罩每帧改三个 GradientStop，是最费的一档。
+    /// </summary>
+    public bool WordScanEnabled { get; set; } = true;
+
+    /// <summary>
+    /// 用户显式指定的主行颜色。null 表示跟随系统主题。
+    /// </summary>
+    /// <remarks>
+    /// 只覆盖**主行与翻译行的文字色**，不覆盖扫描覆盖层：
+    /// 扫描层的语义是「已唱部分更亮」，它的颜色必须相对主行有对比度。
+    /// 如果让用户自定义成和主行同色，逐字扫描就完全看不出来了。
+    /// 所以这里按主行颜色的亮度自动推一个更亮的版本（见
+    /// <see cref="ApplyUserColor"/>）。
+    /// </remarks>
+    public Color? UserPrimaryColor { get; set; }
+
+    /// <summary>
+    /// 用户指定的对齐方式。竖向排版走 <c>TextAlignment</c>，
+    /// 横向走 <see cref="LyricsAlignmentPolicy"/> 算出的位移。
+    /// </summary>
+    public LyricsTextAlignment Alignment { get; set; } = LyricsTextAlignment.Left;
+
+    /// <summary>
+    /// 上一次「跟随主题」时算出的主行色。
+    ///
+    /// 用户清空自定义颜色后要能退回主题色，而 <see cref="ApplyWindowsTheme"/>
+    /// 只在系统主题切换时被调用。把上次的主题色记下来，就能在
+    /// 「从自定义切回跟随」的那一刻直接复用，不必等下一次主题变化。
+    /// </summary>
+    private Color _themePrimaryColor = Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF);
+
+    /// <summary>上一次「跟随主题」时算出的扫描覆盖层色。</summary>
+    private Color _themeScanColor = Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF);
+
+    /// <summary>
     /// 面板内容宽度变化。仅在文本真的换行且宽度差超过阈值时触发，
     /// 宿主据此决定是否请求一次任务栏重排（并自行节流）。
     /// </summary>
@@ -413,6 +462,10 @@ public partial class LyricsPanel : UserControl
                 transform.X = 0;
             }
 
+            // 竖向的对齐由 TextAlignment 负责（宽度被钉成视口宽度），
+            // 覆盖层的位移也要一起归零，否则会与 TextAlignment 叠加成双倍偏移。
+            SyncScanTransform(0);
+
             return;
         }
 
@@ -433,19 +486,54 @@ public partial class LyricsPanel : UserControl
             lineDurationSeconds: 0,
             enabled: FluentFlyout.Classes.Settings.SettingsManager.Current.TaskbarWidgetScrollingEnabled);
 
+        // 需要滚动时位置由滚动决定，对齐不参与（否则两者相加会把文本推出视口）；
+        // 不需要滚动时按对齐算位移——横向的 TextBlock 宽度是 Auto，
+        // TextAlignment 在这种宽度下不起作用，只能靠位移。
+        var offsetX = geometry.NeedsScroll
+            ? geometry.OffsetX
+            : LyricsAlignmentPolicy.GetOffset(Alignment, viewportWidth, _cachedPrimaryTextWidth);
+
         // 只有偏移真的变了才写属性，避免每帧触发 TranslateTransform 的
         // 失效传播。1e-6 是 double 精度级别，不影响视觉。
-        if (Math.Abs(transform.X - geometry.OffsetX) > 1e-6)
+        if (Math.Abs(transform.X - offsetX) > 1e-6)
         {
-            transform.X = geometry.OffsetX;
+            transform.X = offsetX;
+        }
+
+        // 扫描覆盖层必须与主行完全同步位移。
+        //
+        // 这一步此前是缺的：PrimaryScanText 的 TranslateTransform 从来没被写过，
+        // 于是长句滚动时主行往左移、覆盖层留在原地，高亮位置整块错开。
+        // 短句不滚动时看不出问题，但「长句 + 逐字扫描」恰恰是最常见的组合。
+        // 加了对齐之后更明显——不滚动也会错位。
+        SyncScanTransform(offsetX);
+    }
+
+    /// <summary>
+    /// 让扫描覆盖层跟上主行的位移。
+    /// </summary>
+    /// <remarks>
+    /// 覆盖层的 <c>OpacityMask</c> 是挂在自身上的，<c>RenderTransform</c>
+    /// 会连同遮罩一起移动，所以只要 X 一致，扫描边界就始终对得上文本。
+    /// </remarks>
+    private void SyncScanTransform(double offsetX)
+    {
+        if (PrimaryScanText.RenderTransform is not TranslateTransform scanTransform)
+        {
+            return;
+        }
+
+        if (Math.Abs(scanTransform.X - offsetX) > 1e-6)
+        {
+            scanTransform.X = offsetX;
         }
     }
 
     /// <summary>
     /// 决定次要行显示什么：
     /// - 单行模式 → 不显示；
-    /// - 有翻译 → 显示当前行的翻译（优先级最高，用户开翻译就是想看它）；
-    /// - 无翻译 → 显示下一行预览，用次要色区分。
+    /// - 有翻译且用户开着翻译 → 显示当前行的翻译（用户开翻译就是想看它）；
+    /// - 其余 → 显示下一行预览，用次要色区分。
     /// </summary>
     /// <returns>次要行文本是否变化。竖向折行需要据此决定要不要重新量高度。</returns>
     private bool UpdateSecondaryLine(LyricDisplayFrame frame)
@@ -455,11 +543,15 @@ public partial class LyricsPanel : UserControl
             return SetSecondaryText(string.Empty, LyricsPanelMetrics.TranslationOpacity, visible: false);
         }
 
-        var translation = frame.CurrentTranslation;
-        if (!string.IsNullOrWhiteSpace(translation))
+        // 用户关掉翻译时，翻译一律不显示，退回「下一行预览」。
+        //
+        // 注意这里不能直接 return「不显示」：双行模式下第二行本来就该
+        // 显示下一行，翻译只是它的一个可选替代。关翻译应该回到
+        // 「看下一行」，而不是留一块空白。
+        if (ShowTranslation && !string.IsNullOrWhiteSpace(frame.CurrentTranslation))
         {
             // 翻译行用更低的透明度，与 TL 的 --translation: 0.70 一致。
-            return SetSecondaryText(translation, LyricsPanelMetrics.TranslationOpacity, visible: true);
+            return SetSecondaryText(frame.CurrentTranslation, LyricsPanelMetrics.TranslationOpacity, visible: true);
         }
 
         var next = frame.NextLine ?? string.Empty;
@@ -504,6 +596,23 @@ public partial class LyricsPanel : UserControl
     /// </summary>
     private void UpdateScan(LyricDisplayFrame frame)
     {
+        // 用户关掉逐字扫描：不进扫描态，当前行整体高亮。
+        //
+        // 这条分支必须在进度判断**之前**：否则关掉开关时如果刚好
+        // 有一帧带进度，就会先进扫描态再退出来，闪一下。
+        if (!WordScanEnabled)
+        {
+            if (_isScanning)
+            {
+                PrimaryScanText.Visibility = Visibility.Collapsed;
+                PrimaryText.Opacity = LyricsPanelMetrics.PrimaryOpacity;
+                _isScanning = false;
+                _lastScanProgress = -1;
+            }
+
+            return;
+        }
+
         if (frame.WordScanProgress is not { } progress || progress <= 0)
         {
             if (_isScanning)
@@ -803,11 +912,86 @@ public partial class LyricsPanel : UserControl
     /// 应用配色。颜色必须来自系统主题（<c>WindowsThemeDetector</c>），
     /// 不能用 App 主题——任务栏配色跟系统走。
     /// </summary>
+    /// <remarks>
+    /// 生产代码请用 <see cref="ApplyWindowsTheme"/> 或
+    /// <see cref="SetUserPrimaryColor"/>，不要直接调这个：它们负责
+    /// 「用户显式色 vs 主题色」的取舍，直接调会绕开那层判断。
+    /// 保留 public 是给视觉探针用的——探针要指定任意配色验证对比度。
+    /// </remarks>
     public void ApplyPalette(Color primary, Color secondary, Color translation, Color scanOverlay)
     {
         PrimaryText.Foreground = new SolidColorBrush(primary);
         PrimaryScanText.Foreground = new SolidColorBrush(scanOverlay);
         SecondaryText.Foreground = new SolidColorBrush(translation);
+    }
+
+    /// <summary>
+    /// 设置用户显式指定的主行颜色。<c>null</c> 表示回到跟随系统主题。
+    ///
+    /// 只改画笔，不重排——颜色不影响字号与行高。
+    /// </summary>
+    public void SetUserPrimaryColor(Color? color)
+    {
+        UserPrimaryColor = color;
+        ApplyResolvedPalette();
+    }
+
+    /// <summary>
+    /// 设置文本对齐方式。
+    ///
+    /// 竖向与横向的实现方式不同，原因见 <see cref="LyricsAlignmentPolicy"/>：
+    /// 竖向的 <c>TextBlock.Width</c> 被钉成视口宽度（换行需要），
+    /// 所以直接设 <c>TextAlignment</c>；横向宽度是 Auto，只能靠位移。
+    /// </summary>
+    public void SetAlignment(LyricsTextAlignment alignment)
+    {
+        if (Alignment == alignment)
+        {
+            return;
+        }
+
+        Alignment = alignment;
+        ApplyAlignmentToTextBlocks();
+
+        // 横向的位移由 UpdateScroll 每帧算，这里只触发一次重算：
+        // 用当前帧重放一遍即可（帧内容没变，只是对齐变了）。
+        // 竖向没有待处理的位移，SetVerticalMode 的 Width 已经就位。
+        if (!_isVertical && _frame is { } frame)
+        {
+            UpdateScroll(frame);
+        }
+    }
+
+    /// <summary>
+    /// 按当前方向把对齐写到三个 <c>TextBlock</c> 上。
+    ///
+    /// <b>横向一律写 Left，竖向才用 <see cref="Alignment"/></b>。
+    /// 两个方向必须分工，不能都设：
+    /// <list type="bullet">
+    /// <item>横向的 <c>TextBlock.Width</c> 是 Auto（等于文本宽度），
+    /// <c>TextAlignment</c> 在这种宽度下没有可见效果；位置全靠
+    /// <see cref="LyricsAlignmentPolicy"/> 算出的位移。</item>
+    /// <item>竖向的 <c>Width</c> 被钉成视口宽度，<c>TextAlignment</c> 才真正生效，
+    /// 而位移恒为 0。</item>
+    /// </list>
+    /// 若横向也设成 Center/Right，一旦某条路径把 <c>Width</c> 撑开
+    /// （例如后续给长句滚动加固定视口宽度），就会与位移叠加成双倍偏移——
+    /// 那种 bug 只在特定文本长度下出现，极难复现。这里从源头杜绝。
+    /// </summary>
+    private void ApplyAlignmentToTextBlocks()
+    {
+        var textAlignment = _isVertical
+            ? Alignment switch
+            {
+                LyricsTextAlignment.Center => TextAlignment.Center,
+                LyricsTextAlignment.Right => TextAlignment.Right,
+                _ => TextAlignment.Left,
+            }
+            : TextAlignment.Left;
+
+        PrimaryText.TextAlignment = textAlignment;
+        PrimaryScanText.TextAlignment = textAlignment;
+        SecondaryText.TextAlignment = textAlignment;
     }
 
     /// <summary>
@@ -822,26 +1006,86 @@ public partial class LyricsPanel : UserControl
     /// </summary>
     public void ApplyWindowsTheme(bool isDark)
     {
+        Color primary, scanOverlay;
+
         if (isDark)
         {
-            ApplyPalette(
-                primary: Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF),
-                secondary: Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF),
-                translation: Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF),
-                scanOverlay: Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF));
+            primary = Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF);
+            scanOverlay = Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF);
         }
         else
         {
             // 浅色任务栏：用接近黑的文字。0xE4 而不是纯黑，
             // 与 TaskbarWidgetControl.ApplyWindowsTheme 的标题色保持一致。
-            var foreground = Color.FromArgb(0xE4, 0x1C, 0x1C, 0x1C);
-            ApplyPalette(
-                primary: foreground,
-                secondary: foreground,
-                translation: foreground,
-                scanOverlay: Color.FromArgb(0xFF, 0x00, 0x00, 0x00));
+            primary = Color.FromArgb(0xE4, 0x1C, 0x1C, 0x1C);
+            scanOverlay = Color.FromArgb(0xFF, 0x00, 0x00, 0x00);
         }
+
+        // 记住主题色：用户之后清空自定义颜色时要能立刻退回，
+        // 不能等下一次系统主题变化。
+        _themePrimaryColor = primary;
+        _themeScanColor = scanOverlay;
+
+        ApplyResolvedPalette();
     }
+
+    /// <summary>
+    /// 按「用户显式色优先，否则跟随系统主题」重涂一次。
+    ///
+    /// 所有配色入口最终都收敛到这里，保证「谁生效」只有一处判断。
+    /// </summary>
+    private void ApplyResolvedPalette()
+    {
+        if (UserPrimaryColor is not { } custom)
+        {
+            ApplyPalette(
+                primary: _themePrimaryColor,
+                secondary: _themePrimaryColor,
+                translation: _themePrimaryColor,
+                scanOverlay: _themeScanColor);
+            return;
+        }
+
+        // 翻译行与主行同色，靠 Opacity 区分层次（与跟随主题时一致）。
+        ApplyPalette(
+            primary: custom,
+            secondary: custom,
+            translation: custom,
+            scanOverlay: GetScanOverlayFor(custom));
+    }
+
+    /// <summary>
+    /// 为自定义主行色推一个扫描覆盖层色。
+    ///
+    /// 规则：主行越暗，覆盖层越亮；主行越亮，覆盖层越暗。
+    /// 逐字扫描的本质是「已唱部分比未唱部分亮」，而这里底层主行
+    /// 会被压到 <see cref="LyricsPanelMetrics.SecondaryOpacity"/>（0.60），
+    /// 覆盖层只要明显高于它就能形成对比。
+    ///
+    /// 用相对亮度而不是简单的反色：反色会让红色歌词的扫描层变成青色，
+    /// 视觉上完全不像「同一句在扫」。这里改成「往白色方向提亮」或
+    /// 「往黑色方向压暗」，保持色相不变。
+    /// </summary>
+    private static Color GetScanOverlayFor(Color primary)
+    {
+        // Rec.601 亮度，够用且不需要线性化。
+        var luminance = ((0.299 * primary.R) + (0.587 * primary.G) + (0.114 * primary.B)) / 255.0;
+
+        // 已经足够亮（> 0.6）的歌词，覆盖层往白走会看不清，
+        // 改成往黑压——这样压暗后的主行与覆盖层仍有对比。
+        var target = luminance > 0.6 ? Colors.Black : Colors.White;
+
+        // 0.75 与 TL 的 --word-scan-overlay 强度一致；
+        // 同时保留主行色的 alpha，用户设了半透明就跟着半透明。
+        return Color.FromArgb(
+            primary.A,
+            BlendChannel(primary.R, target.R),
+            BlendChannel(primary.G, target.G),
+            BlendChannel(primary.B, target.B));
+    }
+
+    private static byte BlendChannel(byte from, byte to) =>
+        (byte)Math.Clamp(from + ((to - from) * 0.75), 0, 255);
 
     /// <summary>
     /// 切换竖向任务栏排版：<b>反向旋转抵消宿主旋转 + 沿主轴换行</b>。
@@ -915,6 +1159,13 @@ public partial class LyricsPanel : UserControl
         PrimaryScanText.TextWrapping = wrapping;
         SecondaryText.TextWrapping = wrapping;
 
+        // 对齐的实现方式与方向绑定（横向靠位移、竖向靠 TextAlignment），
+        // 所以方向一变必须重新写一遍。写在 TextWrapping 之后：
+        // 竖向的 Width 由下面的 UpdateVerticalWrapLayout 写入，
+        // 而 TextAlignment 要等宽度就位才有意义——但设置本身无副作用，
+        // 提前写不会错，放在这里只是让「与换行一起变」这件事更明显。
+        ApplyAlignmentToTextBlocks();
+
         // 竖向时两行的高度不再固定——换行后行数由内容决定，
         // 交给容器 Auto 高度，由主轴方向的可用长度约束。
         if (isVertical)
@@ -966,6 +1217,30 @@ public partial class LyricsPanel : UserControl
     /// <c>TaskbarWidgetControl.CalculateSize</c> 写入，是唯一可靠来源）。
     /// </para>
     /// </summary>
+    /// <summary>
+    /// 次要行的显示条件变了（翻译开关、单双行切换）之后，让布局跟上。
+    ///
+    /// 只做两件事：
+    /// <list type="number">
+    /// <item>按当前帧重新算一次次要行该显示什么——开关变了但帧没变，
+    /// 不重算就还挂着上一次的内容。</item>
+    /// <item>竖向时重量折行高度（次要行整块出现/消失会改变总高）。</item>
+    /// </list>
+    /// 横向不需要重量：行高固定，只是文本变空。
+    /// </summary>
+    public void RefreshSecondaryLineLayout()
+    {
+        if (_frame is { } frame)
+        {
+            UpdateSecondaryLine(frame);
+        }
+
+        if (_isVertical)
+        {
+            UpdateVerticalWrapLayout();
+        }
+    }
+
     private void UpdateVerticalWrapLayout()
     {
         if (!_isVertical || !_hasMetrics)

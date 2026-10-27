@@ -548,6 +548,146 @@ public partial class UserSettings : ObservableObject
     [ObservableProperty]
     public partial bool TaskbarVisualizerEnabled { get; set; }
 
+    // ---- 歌词（P4）----
+    //
+    // 为什么不按实施计划 P4-6 的设想抽成嵌套类 LyricsSettings：
+    // UserSettings 的持久化完全依赖 XmlSerializer + 反射遍历公共可写属性
+    // （见 PersistedPropertyNames 与 OnPropertyChangedSaveSettings）。
+    // 嵌套类会序列化成嵌套元素，而「旧配置文件缺字段用默认值」这条
+    // 靠的正是 XmlSerializer 对**缺失的标量元素**静默取默认值的行为——
+    // 嵌套对象缺失时整个对象是 null，得额外写一堆空判断，
+    // 迁移风险反而比平铺更高。平铺 + 前缀命名同样能避免字段互相污染。
+    //
+    // 默认值刻意是「关」。歌词会抢占任务栏空间并引入网络请求，
+    // 老用户升级后不该发现自己的任务栏突然变了样。
+
+    /// <summary>
+    /// 是否在任务栏小组件里显示歌词（替换标题/艺术家两行）。
+    /// </summary>
+    [ObservableProperty]
+    public partial bool LyricsEnabled { get; set; }
+
+    /// <summary>
+    /// 歌词字号（DIP）。实际值会被任务栏高度压缩，见 <c>LyricsPanelMetrics.Create</c>。
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LyricsFontSizeText))]
+    public partial int LyricsFontSize { get; set; }
+
+    [XmlIgnore]
+    public string LyricsFontSizeText
+    {
+        get => LyricsFontSize.ToString();
+        set
+        {
+            if (int.TryParse(value, out var result))
+            {
+                LyricsFontSize = result switch
+                {
+                    > 20 => 20,
+                    < 9 => 9,
+                    _ => result
+                };
+            }
+            else
+            {
+                LyricsFontSize = 13;
+            }
+
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>
+    /// 是否显示翻译行。仅在双行模式下有效。
+    /// </summary>
+    [ObservableProperty]
+    public partial bool LyricsShowTranslation { get; set; }
+
+    /// <summary>
+    /// 是否启用逐字扫描高亮。关掉后当前行整体高亮，CPU 占用更低。
+    /// </summary>
+    [ObservableProperty]
+    public partial bool LyricsWordScanEnabled { get; set; }
+
+    /// <summary>
+    /// 是否强制单行（关掉翻译/下一行那一行）。
+    /// </summary>
+    /// <remarks>
+    /// 与「系统自动降级单行」是两件事：后者发生在任务栏太矮装不下两行时
+    /// （见 <c>LyricsMetricsPolicy</c> 的 <c>forceSingleLine</c>），
+    /// 前者是用户的明确选择，在竖向任务栏上也生效。
+    ///
+    /// 默认 <c>false</c>（自动）：多数用户没理由主动关掉第二行，
+    /// 而自动降级已经能覆盖小任务栏这个主要场景。
+    /// </remarks>
+    [ObservableProperty]
+    public partial bool LyricsSingleLine { get; set; }
+
+    /// <summary>
+    /// 歌词主行颜色，十六进制字符串（<c>#RRGGBB</c> / <c>#AARRGGBB</c> / <c>#RGB</c>）。
+    /// 空字符串表示跟随系统主题。
+    /// </summary>
+    /// <remarks>
+    /// 存字符串而不是 <c>Color</c> 或 <c>uint</c>：<c>XmlSerializer</c> 能直接
+    /// 序列化 string，而 <c>Color</c> 需要额外的类型转换器。解析交给
+    /// Core 的 <c>LyricsColorScheme.Parse</c>（有单测覆盖非法输入）。
+    ///
+    /// 这个字段**要持久化**（与 <see cref="LyricsOffsetMilliseconds"/> 相反）：
+    /// 它是稳定的用户偏好，不像偏移那样按曲目变化。
+    /// </remarks>
+    [ObservableProperty]
+    public partial string LyricsColor { get; set; }
+
+    /// <summary>
+    /// 歌词文本对齐方式：0 = 左，1 = 居中，2 = 右。
+    /// </summary>
+    /// <remarks>
+    /// 存 int 而不是枚举：<c>ComboBox.SelectedIndex</c> 直接绑这个值，
+    /// 不需要值转换器；越界值由 <c>LyricsAlignmentPolicy.FromSetting</c> 归一化。
+    /// </remarks>
+    [ObservableProperty]
+    public partial int LyricsAlignment { get; set; }
+
+    /// <summary>
+    /// 当前曲目的偏移量（毫秒）。正值让歌词提前，负值延后。
+    /// </summary>
+    /// <remarks>
+    /// 这个字段只承载托盘菜单的**当前值**，真正的持久化在
+    /// <c>TrackLyricOffsetStore</c> 的 SQLite 里——它按「曲目 + 歌词源」
+    /// 存，一个标量字段装不下。放在这里是为了让托盘菜单能双向绑定，
+    /// 切歌时由 <c>MainWindow</c> 把它同步成新曲目的值。
+    ///
+    /// <b>刻意加 <see cref="XmlIgnoreAttribute"/></b>：真值在 SQLite，
+    /// 这个字段每次换歌都会被覆盖。如果它进了 settings.xml，
+    /// 重启后 <c>CompleteInitialization</c> 之前的那次反序列化会把
+    /// 上一首的偏移写进内存，随后被帧泵读到——表现为「重启后歌词整体偏了
+    /// 几十毫秒，切一次歌才好」。
+    /// </remarks>
+    [XmlIgnore]
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LyricsOffsetText))]
+    public partial int LyricsOffsetMilliseconds { get; set; }
+
+    [XmlIgnore]
+    public string LyricsOffsetText
+    {
+        get => LyricsOffsetMilliseconds.ToString();
+        set
+        {
+            if (int.TryParse(value, out var result))
+            {
+                LyricsOffsetMilliseconds = Math.Clamp(result, -5000, 5000);
+            }
+            else
+            {
+                LyricsOffsetMilliseconds = 0;
+            }
+
+            OnPropertyChanged();
+        }
+    }
+
     /// <summary>
     /// Returns whether app filtering is enabled or disabled.
     /// </summary>
@@ -803,6 +943,14 @@ public partial class UserSettings : ObservableObject
         TaskbarWidgetScrollingTextSpeed = 20;
         TaskbarWidgetScrollingTextLoopForever = false;
         TaskbarVisualizerEnabled = false;
+        LyricsEnabled = false;
+        LyricsFontSize = 13;
+        LyricsShowTranslation = true;
+        LyricsWordScanEnabled = true;
+        LyricsSingleLine = false;
+        LyricsColor = string.Empty;
+        LyricsAlignment = 0;
+        LyricsOffsetMilliseconds = 0;
         AppFilteringEnabled = false;
         AppFilteringMode = 0;
         TaskbarVisualizerPosition = 1;
@@ -1033,11 +1181,191 @@ public partial class UserSettings : ObservableObject
         widget.Dispatcher.Invoke(widget.UpdateMarquees);
     }
 
+    /// <summary>
+    /// 歌词开关变化：启停取帧泵 + 让任务栏窗口重建布局。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 互斥规则（实施计划 P4-6）：**歌词开启时强制关闭频谱可视化**。
+    /// 理由不是「代码上冲突」，而是空间上冲突——两者都占据任务栏上
+    /// 紧邻小组件的那一块，同时开会把整条任务栏挤满，用户还分不清
+    /// 哪块是谁。这里的做法是单向的：开歌词就关频谱，
+    /// 但关歌词**不自动开回频谱**（用户可能是主动关掉的）。
+    /// </para>
+    /// <para>
+    /// 反过来（开频谱时关歌词）不在这里做，而在
+    /// <see cref="OnTaskbarVisualizerEnabledChanged"/> 里——两个方向各管一段，
+    /// 避免两个钩子互相改对方的字段而触发无限递归。
+    /// </para>
+    /// </remarks>
+    partial void OnLyricsEnabledChanged(bool oldValue, bool newValue)
+    {
+        if (oldValue == newValue || _initializing) return;
+
+        // 歌词依赖任务栏小组件这块地方。小组件没开时开歌词没有任何显示位置，
+        // 直接拒绝比「开了但看不见」更容易让用户理解。
+        if (newValue && !TaskbarWidgetEnabled)
+        {
+            LyricsEnabled = false;
+            return;
+        }
+
+        if (newValue && TaskbarVisualizerEnabled)
+        {
+            TaskbarVisualizerEnabled = false;
+        }
+
+        MainWindow mainWindow = (MainWindow)Application.Current.MainWindow;
+        mainWindow.ApplyLyricsSettings();
+        UpdateTaskbar();
+    }
+
+    /// <summary>
+    /// 频谱开启时关掉歌词（<see cref="OnLyricsEnabledChanged"/> 的反向）。
+    /// </summary>
     partial void OnTaskbarVisualizerEnabledChanged(bool oldValue, bool newValue)
     {
         if (oldValue == newValue || _initializing) return;
+
+        if (newValue && LyricsEnabled)
+        {
+            LyricsEnabled = false;
+        }
+
         TaskbarVisualizerControl.OnTaskbarVisualizerEnabledChanged(newValue);
         UpdateTaskbar();
+    }
+
+    /// <summary>
+    /// 字号/翻译/逐字扫描变化：只影响排版，不需要重新检索歌词。
+    /// </summary>
+    partial void OnLyricsFontSizeChanged(int oldValue, int newValue)
+    {
+        if (oldValue == newValue || _initializing) return;
+        ApplyLyricsPresentation();
+    }
+
+    partial void OnLyricsShowTranslationChanged(bool oldValue, bool newValue)
+    {
+        if (oldValue == newValue || _initializing) return;
+        ApplyLyricsPresentation();
+    }
+
+    partial void OnLyricsWordScanEnabledChanged(bool oldValue, bool newValue)
+    {
+        if (oldValue == newValue || _initializing) return;
+        ApplyLyricsPresentation();
+    }
+
+    /// <summary>
+    /// 单/双行切换：走 <see cref="ApplyLyricsPresentation"/>，
+    /// 因为它改变的是度量（<c>forceSingleLine</c>），而不只是文本内容。
+    /// </summary>
+    partial void OnLyricsSingleLineChanged(bool oldValue, bool newValue)
+    {
+        if (oldValue == newValue || _initializing) return;
+        ApplyLyricsPresentation();
+    }
+
+    /// <summary>
+    /// 颜色变化：只换画笔，不重排、不重取歌词。
+    /// </summary>
+    /// <remarks>
+    /// 颜色不需要 <c>RefreshLyricsMetrics</c>——它不影响字号与行高，
+    /// 只影响三个 <c>Foreground</c>。所以这里不调
+    /// <see cref="ApplyLyricsPresentation"/>（那个会顺带刷度量），
+    /// 直接让控件重涂一次。
+    /// </remarks>
+    partial void OnLyricsColorChanged(string oldValue, string newValue)
+    {
+        if (oldValue == newValue || _initializing) return;
+        RefreshLyricsVisuals();
+    }
+
+    /// <summary>
+    /// 对齐变化：只改位移/对齐，不影响度量。
+    /// </summary>
+    partial void OnLyricsAlignmentChanged(int oldValue, int newValue)
+    {
+        if (oldValue == newValue || _initializing) return;
+        RefreshLyricsVisuals();
+    }
+
+    /// <summary>
+    /// 让控件重涂一次配色与对齐。
+    ///
+    /// 与 <see cref="ApplyLyricsPresentation"/> 的区别：这里不碰度量，
+    /// 所以不会触发 <c>ApplyMetrics</c> 里的重排。改个颜色不该让
+    /// 整块任务栏重新 <c>SetWindowPos</c>。
+    /// </summary>
+    private void RefreshLyricsVisuals()
+    {
+        MainWindow mainWindow = (MainWindow)Application.Current.MainWindow;
+        var widget = mainWindow.taskbarWindow?.Widget;
+        if (widget == null) return;
+
+        widget.Dispatcher.Invoke(widget.RefreshLyricsAppearance);
+    }
+
+    /// <summary>
+    /// 偏移滑块变化：写回 <c>TrackLyricOffsetStore</c>（按曲目 + 歌词源存）。
+    ///
+    /// 这个字段本身**不是**持久化目标——它只是滑块的双向绑定载体。
+    /// 真正的值在 SQLite 里，切歌时由 <c>MainWindow</c> 把它刷成新曲目的已存值，
+    /// 所以这次变更不该被 <c>XmlSerializer</c> 当成用户设置存进 settings.xml。
+    /// </summary>
+    partial void OnLyricsOffsetMillisecondsChanged(int oldValue, int newValue)
+    {
+        if (oldValue == newValue || _initializing) return;
+
+        // 切歌时由 SyncLyricsOffsetFromTrack 写进来的值，不该再存回去。
+        if (_syncingLyricsOffset) return;
+
+        MainWindow mainWindow = (MainWindow)Application.Current.MainWindow;
+        mainWindow.lyricsService?.SaveCurrentOffsetMilliseconds(newValue);
+    }
+
+    /// <summary>
+    /// 正在把「新曲目的已存偏移」同步到 <see cref="LyricsOffsetMilliseconds"/>。
+    ///
+    /// 用途是打断 <see cref="OnLyricsOffsetMillisecondsChanged"/> 里的回写——
+    /// 否则每次换歌都会把 A 歌的偏移写到 B 歌头上。
+    /// </summary>
+    private bool _syncingLyricsOffset;
+
+    /// <summary>
+    /// 换歌后把偏移滑块刷成该曲目的已存值。
+    /// </summary>
+    internal void SyncLyricsOffsetFromTrack(int offsetMilliseconds)
+    {
+        _syncingLyricsOffset = true;
+        try
+        {
+            LyricsOffsetMilliseconds = offsetMilliseconds;
+        }
+        finally
+        {
+            _syncingLyricsOffset = false;
+        }
+    }
+
+    /// <summary>
+    /// 把纯表现类设置刷到任务栏控件上。
+    ///
+    /// 与 <see cref="ApplyLyricsSettings"/> 的分工：这里**不**碰取帧泵，
+    /// 也不重建窗口——改个字号不该让歌词重新检索一遍。
+    /// </summary>
+    private void ApplyLyricsPresentation()
+    {
+        MainWindow mainWindow = (MainWindow)Application.Current.MainWindow;
+        var widget = mainWindow.taskbarWindow?.Widget;
+        if (widget == null) return;
+
+        widget.Dispatcher.Invoke(() =>
+        {
+            widget.RefreshLyricsMetrics();
+            widget.RefreshLyricsOptions();
+        });
     }
 
     partial void OnTaskbarVisualizerBarCountChanged(int oldValue, int newValue)

@@ -248,6 +248,91 @@ public partial class TaskbarWidgetControl : UserControl
     }
 
     /// <summary>
+    /// 把「纯偏好类」歌词设置刷到面板上：翻译行开关、逐字扫描开关。
+    ///
+    /// 与 <see cref="RefreshLyricsMetrics"/> 分开是因为代价不同：
+    /// 这个方法只写两个 bool，不触发重排；度量会改字号与行高，
+    /// 必然重排一次。设置界面改字号时两个都要调，改开关时只调这个。
+    /// </summary>
+    public void RefreshLyricsOptions()
+    {
+        if (!_isLyricsMode)
+        {
+            return;
+        }
+
+        var settings = SettingsManager.Current;
+        LyricsPanel.ShowTranslation = settings.LyricsShowTranslation;
+        LyricsPanel.WordScanEnabled = settings.LyricsWordScanEnabled;
+
+        // 翻译开关可能让次要行整块出现或消失，竖向折行高度必须重量。
+        // 横向不需要：行高是固定的，只是文本变空。
+        LyricsPanel.RefreshSecondaryLineLayout();
+    }
+
+    /// <summary>
+    /// 只刷「外观」类歌词设置：主行颜色、对齐。
+    ///
+    /// 与 <see cref="RefreshLyricsMetrics"/> 的区别：这两项都不影响字号与行高，
+    /// 所以**不触发重排**——改个颜色不该让整块任务栏重新 <c>SetWindowPos</c>。
+    /// 与 <see cref="RefreshLyricsOptions"/> 的区别：那两个开关会改变次要行
+    /// 是否显示（进而改变竖向折行高度），这两个不会。
+    /// </summary>
+    public void RefreshLyricsAppearance()
+    {
+        if (!_isLyricsMode)
+        {
+            return;
+        }
+
+        var settings = SettingsManager.Current;
+        var previousAlignment = LyricsPanel.Alignment;
+
+        LyricsPanel.SetUserPrimaryColor(ResolveUserLyricsColor(settings.LyricsColor));
+        LyricsPanel.SetAlignment(LyricsAlignmentPolicy.FromSetting(settings.LyricsAlignment));
+
+        // 对齐方式变化会改变小组件的宽度策略（见 CalculateLyricsWidth：
+        // 非左对齐要撑满预算）。宽度变了就必须重新走一次
+        // CalculateSize，否则面板还挂在旧宽度上，居中看起来仍是左对齐。
+        //
+        // 这里直接通知宿主重排，而不是走 LyricsPanel.DesiredWidthChanged：
+        // 那个事件的语义是「内容宽度变了」，宿主的处理器会拿宽度值做
+        // 阈值比较；对齐切换时内容宽度可能一个字都没变，但**容器**宽度
+        // 必须变，阈值判断会把它当成噪声丢掉。
+        if (previousAlignment != LyricsPanel.Alignment)
+        {
+            WidgetWidthStrategyChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>
+    /// 歌词的宽度策略变了（对齐方式切换），需要宿主重新算一次尺寸。
+    ///
+    /// 与「内容宽度变了」是两件事：后者可以按阈值节流（差 4 DIP 以内不值得动窗口），
+    /// 前者必须无条件重排——宽度策略决定了 <c>CalculateSize</c> 走哪条分支。
+    /// </summary>
+    public event EventHandler? WidgetWidthStrategyChanged;
+
+    /// <summary>
+    /// 把设置里的十六进制字符串转成 <c>Color</c>。<c>null</c> = 跟随主题。
+    /// </summary>
+    private static Color? ResolveUserLyricsColor(string? hex)
+    {
+        var scheme = LyricsColorScheme.Parse(hex);
+        if (!scheme.IsExplicit)
+        {
+            return null;
+        }
+
+        var argb = scheme.Argb;
+        return Color.FromArgb(
+            (byte)((argb >> 24) & 0xFF),
+            (byte)((argb >> 16) & 0xFF),
+            (byte)((argb >> 8) & 0xFF),
+            (byte)(argb & 0xFF));
+    }
+
+    /// <summary>
     /// 统一决定「标题区还是歌词区」显示哪个。
     ///
     /// 改动前这段逻辑分散在 SetVerticalMode / SetSmallTaskbarMode / UpdateUi
@@ -289,12 +374,25 @@ public partial class TaskbarWidgetControl : UserControl
             return;
         }
 
+        var wasLyricsMode = _isLyricsMode;
         _isLyricsMode = enabled;
 
         if (enabled)
         {
             LyricsPanel.ApplyMetrics(metrics ?? BuildLyricsMetrics());
-            LyricsPanel.PureMusicChanged += OnLyricsPureMusicChanged;
+
+            // 只在「从关到开」的边沿订阅。
+            //
+            // 改动前这里无条件 `+=`，而 P4 的 ApplyLyricsSettings 会被
+            // 「窗口重建 / 设置变化 / 启动」反复调用——每次都传 enabled=true
+            // 且 metrics 为 null，恰好绕过上面那个短路。结果是同一个处理器
+            // 被挂 N 次，一次纯音乐态切换会跑 N 遍 UpdateTextRegionVisibility。
+            // 现在短路条件允许「已开启 + 无 metrics」通过（那是为了让
+            // 别的调用点刷新可见性），所以订阅必须自己判边沿。
+            if (!wasLyricsMode)
+            {
+                LyricsPanel.PureMusicChanged += OnLyricsPureMusicChanged;
+            }
         }
         else
         {
@@ -302,6 +400,17 @@ public partial class TaskbarWidgetControl : UserControl
         }
 
         UpdateTextRegionVisibility();
+
+        // 进歌词模式时把外观类设置刷一遍。
+        //
+        // 必须在 ApplyWindowsTheme 之后：那个方法会把主题色写进面板，
+        // 若顺序反了，用户设的自定义颜色会在下一次主题切换时被覆盖掉。
+        // 这里放在 SetLyricsMode 里而不是只在 RefreshLyricsAppearance 里，
+        // 是因为「刚开启歌词」这条路径不会经过设置变更钩子。
+        if (enabled)
+        {
+            RefreshLyricsAppearance();
+        }
 
         // 进歌词模式时停掉标题滚动动画。隐藏的 TextBlock 上跑着
         // RepeatBehavior.Forever 的动画仍然消耗渲染时钟，
@@ -443,9 +552,13 @@ public partial class TaskbarWidgetControl : UserControl
     /// </summary>
     private LyricsPanelMetrics BuildLyricsMetrics()
     {
+        var settings = SettingsManager.Current;
+
         return LyricsMetricsPolicy.Create(
             isVertical: _isVertical,
-            isSmallTaskbar: _isSmallTaskbar);
+            isSmallTaskbar: _isSmallTaskbar,
+            preferredFontSize: settings.LyricsFontSize,
+            userSingleLine: settings.LyricsSingleLine);
     }
 
     /// <summary>
@@ -795,6 +908,20 @@ public partial class TaskbarWidgetControl : UserControl
     /// </summary>
     private double CalculateLyricsWidth(double coverImageMargin, double maxLogicalWidth)
     {
+        // 居中和右对齐需要「富余宽度」才有意义。
+        //
+        // 左对齐（默认）时小组件宽度按内容收缩，这是 FF 一贯的行为：
+        // 短句就该占得少，不然任务栏上白占一块。但居中/右对齐下，
+        // 如果宽度也收缩到内容宽度，富余恒为 0，三种对齐的渲染结果
+        // 完全相同——用户会以为设置没生效。
+        //
+        // 所以非左对齐时直接吃满可用预算。代价是短句旁边会留白，
+        // 但那正是用户选居中的目的（在固定区域里居中显示）。
+        if (GetEffectiveLyricsAlignment() != LyricsTextAlignment.Left)
+        {
+            return maxLogicalWidth;
+        }
+
         var contentWidth = LyricsPanel.DesiredContentWidth;
 
         if (contentWidth <= 0)
@@ -808,6 +935,24 @@ public partial class TaskbarWidgetControl : UserControl
 
         // 歌词同样受任务栏可用区间约束，只缩不放。
         return Math.Min(logicalWidth, maxLogicalWidth);
+    }
+
+    /// <summary>
+    /// 当前生效的歌词对齐方式。
+    ///
+    /// 竖向时强制左对齐：竖向的文本宽度被钉成视口宽度（换行需要有限约束），
+    /// 对齐由 <c>TextAlignment</c> 负责，而竖向任务栏的宽度只有 40–60 DIP，
+    /// 一行往往刚好占满，居中与右对齐在视觉上与左对齐没有区别。
+    /// 强行让竖向也撑满预算会把宽度算错（竖向的 maxLogicalWidth 是主轴长度）。
+    /// </summary>
+    private LyricsTextAlignment GetEffectiveLyricsAlignment()
+    {
+        if (_isVertical)
+        {
+            return LyricsTextAlignment.Left;
+        }
+
+        return LyricsAlignmentPolicy.FromSetting(SettingsManager.Current.LyricsAlignment);
     }
 
     public void UpdateMarquees()

@@ -1,0 +1,180 @@
+<Page x:Class="FluentFlyoutWPF.Pages.LyricsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+      xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      xmlns:controls="clr-namespace:MicaWPF.Controls;assembly=MicaWPF"
+      xmlns:viewModels="clr-namespace:FluentFlyoutWPF.ViewModels"
+      xmlns:fluentflyoutcontrols="clr-namespace:FluentFlyout.Controls"
+      mc:Ignorable="d"
+      d:DesignHeight="900" d:DesignWidth="800"
+      Title="LyricsPage"
+      d:DataContext="{d:DesignInstance viewModels:UserSettings}"
+      Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+      d:Background="White">
+
+    <StackPanel MaxWidth="1000" Margin="16">
+        <TextBlock Text="{DynamicResource LyricsTitle}" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,20" />
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
+                <Border CornerRadius="10" ClipToBounds="True" Width="164" Height="98">
+                    <Border.Background>
+                        <ImageBrush ImageSource="/Resources/FluentFlyoutDemo9.1.png" Stretch="UniformToFill" />
+                    </Border.Background>
+                </Border>
+                <TextBlock FontSize="14" FontWeight="Regular" HorizontalAlignment="Stretch" Opacity="0.75" Margin="12,0,0,0" MaxWidth="450"
+                           TextWrapping="WrapWithOverflow" Text="{DynamicResource LyricsDescription}" />
+            </StackPanel>
+
+            <!-- 前置条件：任务栏小组件必须开着，歌词才有地方显示 -->
+            <ui:InfoBar Grid.Row="1" Title="{DynamicResource LyricsRequiresWidgetWarning}" IsOpen="True" Severity="Warning" IsClosable="False" Margin="0,0,0,8">
+                <ui:InfoBar.Style>
+                    <Style TargetType="ui:InfoBar" BasedOn="{StaticResource {x:Type ui:InfoBar}}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding TaskbarWidgetEnabled}" Value="False">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ui:InfoBar.Style>
+            </ui:InfoBar>
+
+            <ui:CardControl x:Name="LyricsEnabledCard" Tag="Indexable" Grid.Row="2" Icon="{ui:SymbolIcon TextEffects24}" Margin="0,0,0,3">
+                <ui:CardControl.Header>
+                    <StackPanel Orientation="Vertical">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{DynamicResource LyricsEnabledTitle}" FontSize="14" FontWeight="Regular" VerticalAlignment="Center" />
+                            <fluentflyoutcontrols:AccentBadge Margin="6,0,0,0" />
+                        </StackPanel>
+                        <TextBlock Text="{DynamicResource LyricsEnabledDescription}" FontSize="12" Opacity="0.5" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <ui:ToggleSwitch IsChecked="{Binding LyricsEnabled, Mode=TwoWay}"
+                                 IsEnabled="{Binding TaskbarWidgetEnabled}" />
+            </ui:CardControl>
+
+            <ui:CardControl x:Name="LyricsFontSizeCard" Tag="Indexable" Grid.Row="3" Icon="{ui:SymbolIcon TextFont24}" Margin="0,0,0,3">
+                <ui:CardControl.Header>
+                    <StackPanel Orientation="Vertical">
+                        <TextBlock Text="{DynamicResource LyricsFontSizeTitle}" FontSize="14" FontWeight="Regular" VerticalAlignment="Center" />
+                        <TextBlock Text="{DynamicResource LyricsFontSizeDescription}" FontSize="12" Opacity="0.5" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding LyricsFontSizeText}" VerticalAlignment="Center" Margin="0,0,8,0" Opacity="0.7" />
+                    <ui:NumberBox Value="{Binding LyricsFontSize, Mode=TwoWay}" MinWidth="120"
+                                  Minimum="9" Maximum="20" SmallChange="1" LargeChange="2" SpinButtonPlacementMode="Compact" />
+                </StackPanel>
+            </ui:CardControl>
+
+            <ui:CardControl x:Name="LyricsShowTranslationCard" Tag="Indexable" Grid.Row="4" Icon="{ui:SymbolIcon Translate24}" Margin="0,0,0,3">
+                <ui:CardControl.Header>
+                    <StackPanel Orientation="Vertical">
+                        <TextBlock Text="{DynamicResource LyricsShowTranslationTitle}" FontSize="14" FontWeight="Regular" VerticalAlignment="Center" />
+                        <TextBlock Text="{DynamicResource LyricsShowTranslationDescription}" FontSize="12" Opacity="0.5" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <ui:ToggleSwitch IsChecked="{Binding LyricsShowTranslation, Mode=TwoWay}" IsEnabled="{Binding LyricsEnabled}" />
+            </ui:CardControl>
+
+            <ui:CardControl x:Name="LyricsWordScanCard" Tag="Indexable" Grid.Row="5" Icon="{ui:SymbolIcon Highlight24}" Margin="0,0,0,3">
+                <ui:CardControl.Header>
+                    <StackPanel Orientation="Vertical">
+                        <TextBlock Text="{DynamicResource LyricsWordScanTitle}" FontSize="14" FontWeight="Regular" VerticalAlignment="Center" />
+                        <TextBlock Text="{DynamicResource LyricsWordScanDescription}" FontSize="12" Opacity="0.5" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <ui:ToggleSwitch IsChecked="{Binding LyricsWordScanEnabled, Mode=TwoWay}" IsEnabled="{Binding LyricsEnabled}" />
+            </ui:CardControl>
+
+            <!--
+                单/双行：开 = 强制单行，关 = 自动（装不下时系统自己降级）。
+                用 ToggleSwitch 而不是「单行/双行」二选一，因为第三态
+                「自动」才是默认值——多数用户根本不需要关心这件事。
+            -->
+            <ui:CardControl x:Name="LyricsSingleLineCard" Tag="Indexable" Grid.Row="6" Icon="{ui:SymbolIcon TextLineSpacing24}" Margin="0,0,0,3">
+                <ui:CardControl.Header>
+                    <StackPanel Orientation="Vertical">
+                        <TextBlock Text="{DynamicResource LyricsSingleLineTitle}" FontSize="14" FontWeight="Regular" VerticalAlignment="Center" />
+                        <TextBlock Text="{DynamicResource LyricsSingleLineDescription}" FontSize="12" Opacity="0.5" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <ui:ToggleSwitch IsChecked="{Binding LyricsSingleLine, Mode=TwoWay}" IsEnabled="{Binding LyricsEnabled}" />
+            </ui:CardControl>
+
+            <!-- 颜色：空 = 跟随系统主题。文本框而不是取色器，见 LyricsColorScheme 的说明。 -->
+            <ui:CardControl x:Name="LyricsColorCard" Tag="Indexable" Grid.Row="7" Icon="{ui:SymbolIcon Color24}" Margin="0,0,0,3">
+                <ui:CardControl.Header>
+                    <StackPanel Orientation="Vertical">
+                        <TextBlock Text="{DynamicResource LyricsColorTitle}" FontSize="14" FontWeight="Regular" VerticalAlignment="Center" />
+                        <TextBlock Text="{DynamicResource LyricsColorDescription}" FontSize="12" Opacity="0.5" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <StackPanel Orientation="Horizontal">
+                    <!--
+                        预览块：绑定的是同一个 LyricsColor 字符串，
+                        靠 LyricsColorBrushConverter 转成画笔。转换失败时
+                        返回透明，也就是「不显示预览」——比显示一块黑更诚实。
+                    -->
+                    <Border Width="28" Height="28" CornerRadius="4" Margin="0,0,8,0"
+                            BorderThickness="1" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                            Background="{Binding LyricsColor, Converter={StaticResource LyricsColorBrushConverter}}" />
+                    <ui:TextBox Text="{Binding LyricsColor, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                PlaceholderText="{DynamicResource LyricsColorPlaceholder}"
+                                MinWidth="140" MaxLength="9" IsEnabled="{Binding LyricsEnabled}" />
+                </StackPanel>
+            </ui:CardControl>
+
+            <!-- 对齐：0/1/2 直接对应 SelectedIndex，不需要值转换器。 -->
+            <ui:CardControl x:Name="LyricsAlignmentCard" Tag="Indexable" Grid.Row="8" Icon="{ui:SymbolIcon AlignCenter24}" Margin="0,0,0,3">
+                <ui:CardControl.Header>
+                    <StackPanel Orientation="Vertical">
+                        <TextBlock Text="{DynamicResource LyricsAlignmentTitle}" FontSize="14" FontWeight="Regular" VerticalAlignment="Center" />
+                        <TextBlock Text="{DynamicResource LyricsAlignmentDescription}" FontSize="12" Opacity="0.5" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <ComboBox SelectedIndex="{Binding LyricsAlignment, Mode=TwoWay}" MinWidth="140" IsEnabled="{Binding LyricsEnabled}">
+                    <ComboBoxItem Content="{DynamicResource LyricsAlignmentLeft}" />
+                    <ComboBoxItem Content="{DynamicResource LyricsAlignmentCenter}" />
+                    <ComboBoxItem Content="{DynamicResource LyricsAlignmentRight}" />
+                </ComboBox>
+            </ui:CardControl>
+
+            <ui:CardControl x:Name="LyricsOffsetCard" Tag="Indexable" Grid.Row="9" Icon="{ui:SymbolIcon Timer24}" Margin="0,0,0,8">
+                <ui:CardControl.Header>
+                    <StackPanel Orientation="Vertical">
+                        <TextBlock Text="{DynamicResource LyricsOffsetTitle}" FontSize="14" FontWeight="Regular" VerticalAlignment="Center" />
+                        <TextBlock Text="{DynamicResource LyricsOffsetDescription}" FontSize="12" Opacity="0.5" />
+                    </StackPanel>
+                </ui:CardControl.Header>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding LyricsOffsetText}" VerticalAlignment="Center" Margin="0,0,8,0" Opacity="0.7" />
+                    <ui:NumberBox Value="{Binding LyricsOffsetMilliseconds, Mode=TwoWay}" MinWidth="120"
+                                  Minimum="-5000" Maximum="5000" SmallChange="100" LargeChange="500" SpinButtonPlacementMode="Compact" />
+                </StackPanel>
+            </ui:CardControl>
+
+            <ui:InfoBar Grid.Row="10" Title="{DynamicResource LyricsVerticalTaskbarNote}" IsOpen="True" Severity="Informational" IsClosable="False" Margin="0,0,0,8" />
+
+            <ui:InfoBar Grid.Row="11" Title="{DynamicResource LyricsSourceNote}" IsOpen="True" Severity="Informational" IsClosable="False" />
+        </Grid>
+    </StackPanel>
+</Page>

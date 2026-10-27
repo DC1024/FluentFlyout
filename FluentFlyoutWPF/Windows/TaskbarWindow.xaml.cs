@@ -161,6 +161,24 @@ public partial class TaskbarWindow : Window
         SetupWindow();
         _mainWindow = (MainWindow)Application.Current.MainWindow;
         Widget.SetMainWindow(_mainWindow);
+
+        // 窗口重建（Explorer 重启 / 换屏 / 改设置）后必须重新把歌词态推回去：
+        // 新建的 Widget 是全新实例，IsLyricsMode 默认 false，
+        // 不推的话用户会看到「歌词设置是开的，但任务栏只剩标题」。
+        //
+        // **不能走 _mainWindow.ApplyLyricsSettings()**：本窗口的 Show() 在
+        // 构造函数最后一行，Loaded 会在构造函数返回**之前**同步触发，
+        // 那一刻 MainWindow.taskbarWindow 还是旧值（或被置成了 null），
+        // 于是 ApplyLyricsSettings 里的 `taskbarWindow?.Widget` 拿到 null 直接返回。
+        // 这里直接对**自己**的 Widget 操作，不依赖那个字段的赋值时机。
+        var active = _mainWindow.ApplyLyricsSettingsTo(Widget);
+        _mainWindow.UpdateLyricsTrayMenu(active);
+
+        // 对齐方式切换会改变歌词的宽度策略（非左对齐时撑满可用预算），
+        // 必须无条件重排一次。不能靠 1.5s 的定时器兜底：那期间用户
+        // 已经把「居中」点下去了，看到的却还是左对齐，会以为设置没生效。
+        Widget.WidgetWidthStrategyChanged += (_, _) =>
+            Dispatcher.BeginInvoke(() => UpdatePosition(), DispatcherPriority.Background);
     }
 
     private IntPtr GetSelectedTaskbarHandle(out bool isMainTaskbarSelected)

@@ -5,6 +5,8 @@ using FluentFlyout.Classes;
 using FluentFlyout.Classes.Settings;
 using FluentFlyout.Classes.Utils;
 using FluentFlyout.Controls;
+using FluentFlyout.Lyrics.Adapter;
+using FluentFlyout.Lyrics.Models;
 using FluentFlyout.Windows;
 using FluentFlyoutWPF.Classes;
 using FluentFlyoutWPF.Classes.Services;
@@ -75,6 +77,13 @@ public partial class MainWindow : MicaWindow
     private DateTime _lastSelfUpdateTimestamp = DateTime.MinValue;
 
     internal TaskbarWindow? taskbarWindow;
+
+    /// <summary>
+    /// 歌词功能的装配根。**整个应用只有一个**，与任务栏窗口的生命周期解耦——
+    /// 窗口会被 Explorer 重启 / 换屏 / 改设置反复重建，而检索链路里的
+    /// 已解析文档、网络缓存、偏移数据库都该活得更久。
+    /// </summary>
+    internal LyricsService? lyricsService;
 
     private VolumeMixerWindow? volumeMixerWindow;
 
@@ -447,6 +456,19 @@ public partial class MainWindow : MicaWindow
     private void openSettings(object? sender, EventArgs e)
     {
         SettingsWindow.ShowInstance();
+    }
+
+    /// <summary>
+    /// 托盘菜单「调整当前歌曲偏移」：打开设置并直接落到歌词页。
+    ///
+    /// 为什么不弹一个独立的小窗口：偏移滑块已经在歌词页上了，
+    /// 再做一个弹窗就是两份 UI 两处维护，且用户调完还想顺手改字号时
+    /// 得关掉再开设置。直接导航过去最省事。
+    /// </summary>
+    private void openLyricsOffset(object? sender, EventArgs e)
+    {
+        SettingsWindow.ShowInstance();
+        SettingsWindow.NavigateToPage(typeof(Pages.LyricsPage));
     }
 
     public static int getDuration() // get the duration of the animation based on the speed setting
@@ -1625,6 +1647,16 @@ public partial class MainWindow : MicaWindow
             if (volumeMixerWindow?.IsLoaded == true)
                 volumeMixerWindow.Close();
 
+            // 歌词服务必须先于 NLog 关闭释放：它的 Dispose 链里
+            // 有若干 Logger.Debug 调用（帧泵异常、缓存落盘失败等），
+            // 反过来会在已关闭的日志器上写，抛 ObjectDisposedException。
+            if (lyricsService is not null)
+            {
+                lyricsService.FrameReady -= OnLyricFrameReady;
+                lyricsService.Dispose();
+                lyricsService = null;
+            }
+
             // restore native volume OSD
             VolumeMixerWindow.ShowVolumeOsd();
 
@@ -2003,8 +2035,132 @@ public partial class MainWindow : MicaWindow
 
         BitmapHelper.GetDominantColors(1);
         volumeMixerWindow = new VolumeMixerWindow();
+
+        // 歌词服务先于任务栏窗口创建：窗口的 Loaded 里会调用
+        // ApplyLyricsSettings 去拿帧泵，服务不存在就只能等到下一次
+        // 设置变化才有歌词。顺序反过来在冷启动时必定丢第一次。
+        EnsureLyricsService();
+
         taskbarWindow = new TaskbarWindow();
         UpdateTaskbar();
+    }
+
+    /// <summary>
+    /// 懒创建歌词服务。返回已存在的实例，不重复创建。
+    /// </summary>
+    /// <remarks>
+    /// 会话选择回调传的是 <see cref="GetActiveMediaSession"/> 本身而不是
+    /// 复制一份逻辑——FF 那套语义叠加了应用黑白名单与 pinned 失效清理，
+    /// 复制必然与主界面分叉（见 P2 的架构决定）。
+    /// </remarks>
+    internal LyricsService EnsureLyricsService()
+    {
+        if (lyricsService is not null)
+        {
+            return lyricsService;
+        }
+
+        lyricsService = new LyricsService(GetActiveMediaSession, Dispatcher);
+        lyricsService.FrameReady += OnLyricFrameReady;
+        lyricsService.CurrentTrackChanged += OnLyricCurrentTrackChanged;
+        Logger.Info("Lyrics service created");
+
+        return lyricsService;
+    }
+
+    /// <summary>
+    /// 换歌了：把设置界面上的「当前歌曲偏移」刷成新曲目的已存值。
+    /// </summary>
+    /// <remarks>
+    /// 不刷的话滑块会一直停在上一次拖动的值，用户以为偏移还在生效，
+    /// 实际上歌词按的是另一条记录（或 0）。这是典型的「看起来能用但结果错」
+    /// ——比直接报错更难查。
+    /// </remarks>
+    private void OnLyricCurrentTrackChanged(object? sender, string? title)
+    {
+        if (sender is not LyricsService service)
+        {
+            return;
+        }
+
+        var offset = service.GetCurrentOffsetMilliseconds();
+
+        // 直接写字段会触发 OnLyricsOffsetMillisecondsChanged，
+        // 又把它存回数据库——必须用 _initializing 之外的静默路径。
+        // 这里的做法是临时切到「正在同步」标志。
+        SettingsManager.Current.SyncLyricsOffsetFromTrack(offset);
+    }
+
+    /// <summary>
+    /// 帧泵产出一帧歌词，转发给任务栏小组件。
+    /// </summary>
+    /// <remarks>
+    /// 帧泵保证在 UI 线程上触发，这里可以直接改可视树。
+    /// 窗口可能正在重建（<c>taskbarWindow</c> 为 null 或控件未加载），
+    /// 这种情况直接丢弃——下一帧 33ms 后就到，不值得排队补发。
+    /// </remarks>
+    private void OnLyricFrameReady(object? sender, LyricDisplayFrame frame)
+    {
+        taskbarWindow?.Widget.UpdateLyricsFrame(frame);
+    }
+
+    /// <summary>
+    /// 按设置把歌词模式开关与纯表现项刷到任务栏控件上。
+    ///
+    /// 调用时机：启动后、任务栏窗口重建后、歌词相关设置变化后。
+    /// 幂等——重复调用只是重设一遍同样的值。
+    /// </summary>
+    internal void ApplyLyricsSettings()
+    {
+        var active = ApplyLyricsSettingsTo(taskbarWindow?.Widget);
+        UpdateLyricsTrayMenu(active);
+    }
+
+    /// <summary>
+    /// 同上，但作用于调用方指定的控件实例。
+    ///
+    /// 为什么需要这个重载：<c>TaskbarWindow</c> 的 <c>Show()</c> 写在构造函数
+    /// 最后一行，而 WPF 的 <c>Loaded</c> 会在构造函数返回**之前**同步触发。
+    /// 那一刻 <c>MainWindow.taskbarWindow</c> 还没被赋成新窗口（首次创建时是
+    /// <c>null</c>，重建时是已被 <c>Close</c> 掉的旧实例）。让窗口把自己的
+    /// <c>Widget</c> 传进来，就绕开了这个赋值时序。
+    /// </summary>
+    /// <returns>歌词是否实际生效（用于同步托盘菜单）。</returns>
+    internal bool ApplyLyricsSettingsTo(TaskbarWidgetControl? widget)
+    {
+        var service = EnsureLyricsService();
+        var settings = SettingsManager.Current;
+
+        // 「歌词真正生效」= 用户开了歌词 + 任务栏小组件本身是开的。
+        // 少任何一个条件都不该启泵：泵每 33ms 做一次跨进程 COM 采样，
+        // 白跑着就是纯浪费。
+        var active = settings.LyricsEnabled && settings.TaskbarWidgetEnabled;
+        service.SetEnabled(active);
+
+        if (widget is null)
+        {
+            return active;
+        }
+
+        widget.Dispatcher.Invoke(() =>
+        {
+            widget.SetLyricsMode(active);
+            if (active)
+            {
+                widget.RefreshLyricsOptions();
+            }
+        });
+
+        return active;
+    }
+
+    /// <summary>
+    /// 托盘菜单项跟着歌词态走：没开歌词时「调整偏移」没有意义，
+    /// 留在菜单里只会让用户点进去发现一堆灰掉的控件。
+    /// </summary>
+    internal void UpdateLyricsTrayMenu(bool active)
+    {
+        NotifyIconLyricsOffset.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
     }
 
     public void RecreateTaskbarWindow()
@@ -2025,6 +2181,11 @@ public partial class MainWindow : MicaWindow
             }
 
             taskbarWindow = new();
+
+            // 在 UpdateTaskbar 之前先切好歌词模式，否则会先按「标题 + 艺术家」
+            // 画一帧，再被 Loaded 里的 ApplyLyricsSettings 改成歌词——
+            // 用户看到的是每次 Explorer 重启都闪一下标题。
+            ApplyLyricsSettings();
             UpdateTaskbar();
 
             Logger.Info("Taskbar Widget window recreated successfully");
