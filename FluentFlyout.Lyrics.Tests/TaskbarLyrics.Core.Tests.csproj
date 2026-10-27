@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 与 FluentFlyout.Lyrics 保持同一 TFM -->
+    <TargetFramework>net10.0-windows10.0.22000.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!--
+      程序集名必须保持 TaskbarLyrics.Core.Tests：
+      FluentFlyout.Lyrics/AssemblyInfo.cs 里的 InternalsVisibleTo 指向这个名字，
+      改名会导致所有 internal 类型在测试中不可见。
+      等 P1-2 重命名命名空间时，两边一起改。
+    -->
+    <AssemblyName>TaskbarLyrics.Core.Tests</AssemblyName>
+    <RootNamespace>TaskbarLyrics.Core.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FluentFlyout.Lyrics\TaskbarLyrics.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <!-- QqMusicContentParityTests / TrackLyricOffsetStoreTests 直接用到 Sqlite 连接 -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
+  </ItemGroup>
+
+  <!-- TestData 需要复制到输出目录，测试按 AppContext.BaseDirectory 相对路径读取 -->
+  <ItemGroup>
+    <None Update="TestData\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
