@@ -245,6 +245,68 @@ public partial class TaskbarWidgetControl : UserControl
         UpdateTextRegionVisibility();
     }
 
+    /// <summary>歌词模式是否开启。</summary>
+    public bool IsLyricsMode => _isLyricsMode;
+
+    /// <summary>
+    /// 歌词模式下「完全不受任务栏空间约束时」想占的整块宽度，
+    /// 单位是 **DIP 视觉宽度**（与 <c>_nativeWidgetsPadding = 216</c> 同一坐标系）。
+    ///
+    /// 供 <c>TaskbarWindow</c> 做「两遍布局」的第一遍：先问要多大，
+    /// 再拿这个值去问任务栏「放得下吗、放哪」，最后用实际区间长度回压。
+    ///
+    /// **单位必须与 216 对齐**：`CalculateSize` 的 <c>maxLogicalWidth</c>
+    /// 是 `预算 / _scale`，而 <c>physicalWidth</c> 是
+    /// <c>logicalWidth * dpiScale * _scale</c>——也就是说 216 这个常量
+    /// 从来就是「DIP 视觉宽度」，在 150% DPI 下它仍占 216 DIP。
+    /// 若这里返回物理像素，非 100% DPI 时预算会凭空多出 dpiScale 倍。
+    /// </summary>
+    public double MeasureDesiredWidth()
+    {
+        if (!_isLyricsMode)
+        {
+            return 0;
+        }
+
+        var coverImageMargin = _isSmallTaskbar ? SmallCoverImageMargin : DefaultCoverImageMargin;
+        var contentWidth = LyricsPanel.DesiredContentWidth;
+
+        if (contentWidth <= 0)
+        {
+            // 首帧之前没有内容宽度，按最小可用宽度估。
+            // 报 0 会让避让算法认为「什么都不需要」，直接塞进最窄的缝里。
+            contentWidth = TaskbarFreeSpaceLayout.MinimumDisplayLength;
+        }
+
+        var logicalWidth = contentWidth + coverImageMargin + _extraMarginForText + MeasureControlsWidth();
+
+        return logicalWidth * _scale;
+    }
+
+    /// <summary>
+    /// 播放控制按钮占的逻辑宽度（DIP，未乘 <c>_scale</c>）。
+    ///
+    /// 单独拿出来是因为它在 <see cref="CalculateSize"/> 里是**加在宽度上限之后**的
+    /// （`logicalWidth += controlsWidth` 在 clamp 之后），所以上限必须先把
+    /// 这部分扣掉，否则整块占位会超出实测可用区间一个按钮组的宽度。
+    /// </summary>
+    private double MeasureControlsWidth()
+    {
+        if (!SettingsManager.Current.TaskbarWidgetControlsEnabled ||
+            ControlsStackPanel.Visibility != Visibility.Visible)
+        {
+            return 0;
+        }
+
+        var controlsWidth = PreviousButton.Width + PlayPauseButton.Width + NextButton.Width;
+        if (!_isVertical)
+        {
+            controlsWidth += ControlsStackPanel.Margin.Left + ControlsStackPanel.Margin.Right;
+        }
+
+        return controlsWidth;
+    }
+
     /// <summary>按当前任务栏尺寸推导歌词度量。</summary>
     private LyricsPanelMetrics BuildLyricsMetrics()
     {
@@ -438,7 +500,7 @@ public partial class TaskbarWidgetControl : UserControl
         e.Handled = true;
     }
 
-    public (double logicalWidth, double logicalHeight) CalculateSize(double dpiScale)
+    public (double logicalWidth, double logicalHeight) CalculateSize(double dpiScale, double? availableWidth = null)
     {
         double coverImageMargin = _isSmallTaskbar ? SmallCoverImageMargin : DefaultCoverImageMargin;
 
@@ -461,13 +523,39 @@ public partial class TaskbarWidgetControl : UserControl
             textChanged = true;
         }
 
-        // maximum width limit, same as Windows native widget
-        double maxLogicalWidth = _nativeWidgetsPadding / _scale;
+        // 宽度上限，单位是「布局 DIP」（即乘过 _scale 之前的那个数）。
+        //
+        // availableWidth 由 TaskbarWindow 通过 TaskbarFreeSpaceLayout.TryPlace
+        // 实测得出，传的是 **DIP 视觉宽度**（与 _nativeWidgetsPadding 同一坐标系）；
+        // 传 null 时退回原来的硬编码 216。
+        //
+        // 单位链条（改动前就存在，容易看错，写清楚）：
+        //   216 ── 视觉 DIP，恒为 216，不随 DPI 变
+        //   /_scale ── 布局 DIP，240
+        //   ×dpiScale×_scale ── 占屏物理像素
+        // 所以 216 从来不是「物理像素预算」。把 UIA 的物理坐标直接
+        // 当成预算传进来，150% DPI 下会凭空多出 1.5 倍宽度。
+        //
+        // 播放按钮组是**加在 clamp 之后**的（见下方 logicalWidth += controlsWidth），
+        // 所以实测预算必须先把按钮扣掉再当上限用，否则整块占位会
+        // 超出可用区间整整一个按钮组的宽度。传 null 时保持原有语义：
+        // 216 只是文本部分的预算，按钮另算——这是 FF 一直以来的行为，
+        // 不在本次改动里改。
+        double controlsWidth = MeasureControlsWidth();
+
+        double maxLogicalWidth = availableWidth is { } budget
+            ? Math.Max((budget / _scale) - controlsWidth, 0)
+            : _nativeWidgetsPadding / _scale;
+
         double logicalWidth;
 
         if (_isVertical)
         {
             logicalWidth = coverImageMargin;
+        }
+        else if (_isLyricsMode)
+        {
+            logicalWidth = CalculateLyricsWidth(coverImageMargin, maxLogicalWidth);
         }
         else if (SettingsManager.Current.TaskbarWidgetFixedWidth)
         {
@@ -499,6 +587,13 @@ public partial class TaskbarWidgetControl : UserControl
             widthChanged = true;
         }
 
+        // 歌词模式下容器宽度同时决定歌词视口宽度，必须一起更新，
+        // 否则长句滚动会按旧的视口宽度算，滚出边界。
+        if (_isLyricsMode && widthChanged)
+        {
+            LyricsPanel.Width = newTitleContainerWidth;
+        }
+
         // Refresh animations if layout bounds or text contents change
         if (textChanged || widthChanged)
         {
@@ -506,18 +601,41 @@ public partial class TaskbarWidgetControl : UserControl
         }
 
         // add space for playback controls if enabled and visible
-        if (SettingsManager.Current.TaskbarWidgetControlsEnabled && ControlsStackPanel.Visibility == Visibility.Visible)
+        if (controlsWidth > 0)
         {
-            double controlsWidth = PreviousButton.Width + PlayPauseButton.Width + NextButton.Width;
-            if (!_isVertical)
-                controlsWidth += ControlsStackPanel.Margin.Left + ControlsStackPanel.Margin.Right;
-
             logicalWidth += controlsWidth;
         }
 
         double logicalHeight = _isSmallTaskbar ? SmallTaskbarWidgetHeight : DefaultTaskbarWidgetHeight;
 
         return (logicalWidth, logicalHeight);
+    }
+
+    /// <summary>
+    /// 歌词模式下的宽度。
+    ///
+    /// 与标题模式的差别：标题是「内容多宽就多宽」，歌词需要
+    /// **留出滚动余量**——一句长歌词如果刚好卡在视口宽度上，
+    /// 每次换行都会因为多一两个像素触发重排。余量来自
+    /// <c>_extraMarginForText</c>（6 DIP）：它只进 <c>logicalWidth</c>、
+    /// 不进 <c>contentWidth</c>，所以最终的视口宽度
+    /// （<c>logicalWidth - coverImageMargin</c>）比文本宽 6 DIP。
+    /// </summary>
+    private double CalculateLyricsWidth(double coverImageMargin, double maxLogicalWidth)
+    {
+        var contentWidth = LyricsPanel.DesiredContentWidth;
+
+        if (contentWidth <= 0)
+        {
+            // 还没收到帧（刚切到歌词模式），先给一个中等宽度，
+            // 避免先渲染成 0 宽再跳变。
+            contentWidth = maxLogicalWidth * 0.5;
+        }
+
+        var logicalWidth = contentWidth + coverImageMargin + _extraMarginForText;
+
+        // 歌词同样受任务栏可用区间约束，只缩不放。
+        return Math.Min(logicalWidth, maxLogicalWidth);
     }
 
     public void UpdateMarquees()

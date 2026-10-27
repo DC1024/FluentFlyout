@@ -126,6 +126,27 @@ public partial class LyricsPanel : UserControl
     /// <summary>当前是否显示歌词。宿主据此决定是否显示标题/艺术家。</summary>
     public bool IsActive => Visibility == Visibility.Visible;
 
+    /// <summary>
+    /// 内容需要的宽度（DIP），供宿主在 <c>CalculateSize</c> 里使用。
+    ///
+    /// 与 <see cref="MeasureDesiredWidth"/> 的区别：这个属性读缓存，
+    /// 可以在任意时刻廉价查询；后者会真的去量文本。
+    /// </summary>
+    public double DesiredContentWidth
+    {
+        get
+        {
+            if (_cachedPrimaryTextWidth > 0)
+            {
+                return _cachedPrimaryTextWidth;
+            }
+
+            // 缓存还没建立（首帧之前）：退回量一次。
+            UpdatePrimaryTextWidth();
+            return _cachedPrimaryTextWidth;
+        }
+    }
+
     /// <summary>当前度量，供宿主查询所需宽度/高度。</summary>
     public LyricsPanelMetrics Metrics => _metrics;
 

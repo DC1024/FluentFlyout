@@ -154,14 +154,31 @@ UIA 查询还带 `TaskLock` 与 1000ms 超时（`GetTaskbarXamlElementRect`，`:
 但**区间依赖宽度、宽度又依赖区间**。解法是两遍 + 单向 clamp：
 
 ```
-desired = MeasureDesiredWidth(frame)              // 不受上限约束
-ok      = TryPlace(taskbarLen, desired, preferredStart, occupied, out placement)
-budget  = ok ? placement.Length / dpiScale / _scale : 216 / _scale
-final   = Math.Min(desired, budget)               // 只缩不放
+desired = MeasureDesiredWidth()                   // 不受上限约束
+budget  = TaskbarWidthBudget.Resolve(desired, fallback, taskbarLen, preferredStart, occupied)
+final   = Math.Min(desired, budget.Width)         // 只缩不放
 ```
 
-因为 clamp 只会让宽度变小，第二遍不需要重新求 placement。`TryPlace` 返回 false 时
-（可用区间 < `MinimumDisplayLength = 100`）退回当前常量行为，保证不劣化。
+因为 clamp 只会让宽度变小，第二遍不需要重新求 placement。`Resolve` 返回
+`NoUsableGap` 时（可用区间 < `MinimumDisplayLength = 100`）退回当前常量行为，保证不劣化。
+
+**单位是这一节最容易错的地方，实测踩到过一次。** 三个坐标系同时存在：
+
+| 量 | 单位 | 换算 |
+|---|---|---|
+| `_nativeWidgetsPadding = 216` | 视觉 DIP | 恒为 216，不随 DPI 变 |
+| `CalculateSize` 的返回值 / `maxLogicalWidth` | 布局 DIP | `视觉DIP / _scale`（0.9） |
+| `Widget.Width` 最终占屏 | 物理像素 | `布局DIP × dpiScale × _scale` |
+
+也就是说 **216 从来不是物理像素预算**。UIA 与 `GetWindowRect` 返回的是物理坐标，
+若直接把物理像素当成 `availableWidth` 传进 `CalculateSize`，150% DPI 下会凭空多出
+1.5 倍宽度。正确做法：`TaskbarWidthBudget` 的输入输出**全部用物理像素**（与 UIA 同域），
+只在进出这个纯函数时各换算一次，`TaskbarWindow` 之外一律视觉 DIP。
+
+`Resolve` 的四种结果（`Placed` / `OccupancyUnknown` / `NoUsableGap` / `InvalidInput`）
+里，`OccupancyUnknown` 是最关键的一条：**UIA 失败 ≠ 任务栏全空**。任务栏刷新、
+Explorer 重启、第三方任务栏工具介入时 UIA 都会返回失败，把它当成「全空」
+就会把歌词画到托盘图标上。
 
 ### 3.3 逐字扫描的降级判据是数据驱动的，不是能力驱动的
 
