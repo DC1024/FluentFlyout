@@ -5,8 +5,17 @@ name: verify
 #
 # 触发条件：
 #   - 推送到 master 且触及歌词相关目录
-#   - 任何 PR
+#   - 任何 PR（不设 paths 过滤，原因见下）
 #   - 手动触发（可指定是否跑 ARM64）
+#
+# pull_request 刻意不加 paths 过滤：
+#   master 的 protect-master ruleset 把「J1 兼容性探针」「J2 Core 编译」
+#   设为 required_status_checks。GitHub 的规则是「必需检查没产出 =
+#   永远 pending = 永远 blocked」，所以一旦给 PR 加了 paths 过滤，
+#   任何不匹配的 PR（例如只改 FluentFlyoutWPF/Pages/*.xaml）就会卡死。
+#   这正是 PR #5 遇到的情况：只改了一个图标名，J1/J2 从未运行，
+#   mergeable_state 一直是 blocked。
+#   push 到 master 仍保留 paths，避免无关合并浪费 runner。
 on:
   push:
     branches: [master]
@@ -19,14 +28,6 @@ on:
       - 'tools/EncryptedFixtureGen/**'
       - '.github/workflows/verify.yml'
   pull_request:
-    paths:
-      - 'FluentFlyout.Lyrics/**'
-      - 'FluentFlyout.Lyrics.Probe/**'
-      - 'FluentFlyout.Lyrics.Probe.Render/**'
-      - 'FluentFlyout.Lyrics.Probe.Screenshot/**'
-      - 'FluentFlyout.Lyrics.Tests/**'
-      - 'tools/EncryptedFixtureGen/**'
-      - '.github/workflows/verify.yml'
   workflow_dispatch:
     inputs:
       run_arm64:
