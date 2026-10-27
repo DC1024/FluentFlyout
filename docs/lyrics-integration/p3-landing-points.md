@@ -406,7 +406,7 @@ return measured > estimate ? Math.Min(measured, MaxLyricsWidgetLength) : estimat
 | R3 | 宽度与系统托盘图标重叠（开「显示所有托盘图标」） | **高** | 3.2 / P3-9 | 手动把托盘图标铺满，检查 `TryPlace` 是否把 widget 挤到可用区间内 |
 | R4 | 竖向任务栏文字方向错乱 / 误用 `RenderTransform` 导致叠字 | 中 | 4.1 / 4.2 | 四方向任务栏逐一截图，先验符号方向；确认歌词用 `LayoutTransform` |
 | R5 | 小任务栏两行溢出被裁 | 中 | 5 | 切到 28px 任务栏，确认只剩一行且不截断 |
-| R6 | 歌词与频谱同时显示抢空间 | 中 | 2.4 | 定互斥规则：歌词模式优先，纯音乐态才切频谱 |
+| R6 | 歌词与频谱同时显示抢空间 | 中 | 2.4 | **已改为共存**：频谱固定 84 DIP、歌词块按内容收缩，2560 任务栏上合计约 22%；`GetOccupiedIntervals` 把频谱区间列为占用区，两块互相避让，越界再由 `LyricsMainAxisLimit.CapToPreferredHalf` 夹住 |
 | R7 | 隐藏的 `SongTitle` 上仍有 Forever 动画在跑 | 低 | 2.2 `UpdateMarquees` | 歌词态下断点确认 `TranslateTransform.X` 无动画时钟 |
 | R8 | `LayoutTransform` 每帧重设导致 measure 抖动 | 中 | 4.2 | 仅在 `Orientation` 变化时设置，播放中改断点确认不进 measure |
 

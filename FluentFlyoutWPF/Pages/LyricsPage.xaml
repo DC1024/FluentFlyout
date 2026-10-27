@@ -43,8 +43,9 @@
                            TextWrapping="WrapWithOverflow" Text="{DynamicResource LyricsDescription}" />
             </StackPanel>
 
-            <!-- 两条前置条件提示都放这一行，用 StackPanel 竖排：
-                 它们可能同时成立（小组件没开 + 频谱占着位置）。 -->
+            <!-- 前置条件提示。用 StackPanel 竖排是为了将来多条同时成立时不用改结构。
+                 这里曾经还有一条「歌词与频谱互斥」的提示（带一个「关闭频谱并启用歌词」
+                 的按钮），两者改为可同时开启后已删除——现在同时开会并排显示，不是冲突。 -->
             <StackPanel Grid.Row="1">
                 <!-- 前置条件：任务栏小组件必须开着，歌词才有地方显示 -->
                 <ui:InfoBar Title="{DynamicResource LyricsRequiresWidgetWarning}" IsOpen="True" Severity="Warning" IsClosable="False" Margin="0,0,0,8">
@@ -59,61 +60,6 @@
                         </Style>
                     </ui:InfoBar.Style>
                 </ui:InfoBar>
-
-                <!-- 歌词与频谱共用任务栏小组件这一块地方，互斥：
-                     开频谱会静默关掉歌词（UserSettings.OnTaskbarVisualizerEnabledChanged），
-                     反过来也一样。没有这条提示时，用户在频谱页点了开关再回来，
-                     只会看到歌词开关自己变成了关，完全不知道为什么。
-                     这里给出解释 + 一个直接换过来的按钮。
-
-                     为什么不用 ui:InfoBar 承载这个按钮（这是实测结论，不是偏好）：
-                     1) WPF-UI 4.4.2（包 unchihugo.WPF-UI）的 InfoBar 没有 ActionButton
-                        —— 那是 WinUI 3 的 API，XAML 里写 <ui:InfoBar.ActionButton>
-                        会直接 MC3074 编译失败。它的公开属性只有 Title / Message /
-                        Severity / IsOpen / IsClosable / TemplateButtonCommand 六个。
-                     2) InfoBar 虽然继承 ContentControl、ContentProperty 也是 Content，
-                        但模板完全不引用这个 Content。实测把 Button 塞进 Content：
-                        信息条高度仍是 45.0（和只填 Title 时一模一样），按钮的
-                        RenderSize 是 0x0、IsVisible=false，连可视树都不在 InfoBar 下
-                        —— Content 被彻底丢弃，连占位都没有。
-                     3) 剩下的唯一选择是「按钮放在 InfoBar 外面」，那样两者背景色不同、
-                        圆角对不上，看起来像两个不相干的控件。
-
-                     所以这里用 Border 自己拼一个标准 InfoBar 外观（左图标 / 中文字 / 右按钮），
-                     与 WinUI 带 ActionButton 的形态一致。用到的资源键与图标名都已运行时校验：
-                     ControlFillColorDefaultBrush 存在，SymbolRegular.Info24 存在。 -->
-                <Border Background="{DynamicResource ControlFillColorDefaultBrush}"
-                        CornerRadius="4" Padding="14,12" Margin="0,0,0,8">
-                    <Border.Style>
-                        <Style TargetType="Border">
-                            <Setter Property="Visibility" Value="Collapsed" />
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding TaskbarVisualizerEnabled}" Value="True">
-                                    <Setter Property="Visibility" Value="Visible" />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </Border.Style>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <ui:SymbolIcon Grid.Column="0" Symbol="Info24" FontSize="16"
-                                       VerticalAlignment="Top" Margin="0,2,12,0" />
-                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                            <TextBlock Text="{DynamicResource LyricsVisualizerConflictTitle}"
-                                       FontWeight="SemiBold" TextWrapping="Wrap" />
-                            <TextBlock Text="{DynamicResource LyricsVisualizerConflictMessage}"
-                                       Opacity="0.75" TextWrapping="Wrap" Margin="0,2,0,0" />
-                        </StackPanel>
-                        <ui:Button x:Name="SwitchFromVisualizerButton" Grid.Column="2"
-                                   Content="{DynamicResource LyricsVisualizerConflictAction}"
-                                   VerticalAlignment="Center" Margin="12,0,0,0"
-                                   Click="OnSwitchFromVisualizerClick" />
-                    </Grid>
-                </Border>
             </StackPanel>
 
             <ui:CardControl x:Name="LyricsEnabledCard" Tag="Indexable" Grid.Row="2" Icon="{ui:SymbolIcon TextEffects24}" Margin="0,0,0,3">

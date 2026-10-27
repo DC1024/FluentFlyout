@@ -307,11 +307,8 @@
     <system:String x:Key="LyricsTitle">歌词</system:String>
     <system:String x:Key="LyricsDescription">在任务栏小组件里显示当前播放歌曲的同步歌词，支持逐字高亮、翻译行与竖向任务栏换行排版。</system:String>
     <system:String x:Key="LyricsRequiresWidgetWarning">歌词显示在任务栏小组件上，请先在上面的「任务栏小组件」里启用它。</system:String>
-    <system:String x:Key="LyricsVisualizerConflictTitle">频谱占用了任务栏小组件</system:String>
-    <system:String x:Key="LyricsVisualizerConflictMessage">歌词和频谱共用同一块位置，开启其中一个会自动关闭另一个。你之前在「频谱视觉效果」里启用了频谱，歌词因此被关掉了。</system:String>
-    <system:String x:Key="LyricsVisualizerConflictAction">关闭频谱并启用歌词</system:String>
     <system:String x:Key="LyricsEnabledTitle">在任务栏显示歌词</system:String>
-    <system:String x:Key="LyricsEnabledDescription">用歌词替换小组件里的歌曲标题与艺术家，与频谱可视化互斥</system:String>
+    <system:String x:Key="LyricsEnabledDescription">用歌词替换小组件里的歌曲标题与艺术家，可与频谱可视化同时开启</system:String>
     <system:String x:Key="LyricsFontSizeTitle">歌词字号</system:String>
     <system:String x:Key="LyricsFontSizeDescription">单位为像素。任务栏高度不够时会自动缩小</system:String>
     <system:String x:Key="LyricsShowTranslationTitle">显示翻译行</system:String>

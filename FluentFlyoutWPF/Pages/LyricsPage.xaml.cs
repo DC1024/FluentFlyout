@@ -77,21 +77,4 @@ public partial class LyricsPage : Page
         InitializeComponent();
         DataContext = SettingsManager.Current;
     }
-
-    /// <summary>
-    /// 「关闭频谱并启用歌词」：把任务栏小组件从频谱切回歌词。
-    ///
-    /// 顺序不能反。<see cref="UserSettings.OnTaskbarVisualizerEnabledChanged"/>
-    /// 会在频谱被打开时把 <c>LyricsEnabled</c> 置为 false，
-    /// 所以必须<b>先关频谱、再开歌词</b>；倒过来写会被那条互斥逻辑立刻打回。
-    ///
-    /// 这两次赋值各自会触发一次 <c>ApplyLyricsSettings</c>（都是幂等的），
-    /// 不必在这里手动调用。
-    /// </summary>
-    private void OnSwitchFromVisualizerClick(object sender, RoutedEventArgs e)
-    {
-        var settings = SettingsManager.Current;
-        settings.TaskbarVisualizerEnabled = false;
-        settings.LyricsEnabled = true;
-    }
 }
