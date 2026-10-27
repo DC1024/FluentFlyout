@@ -35,7 +35,14 @@ public sealed class LyricsDecryptionTests
     {
         var path = Path.Combine(AppContext.BaseDirectory, "TestData", "Lyrics", fileName);
         Assert.True(File.Exists(path), $"测试样本不存在: {path}");
-        return File.ReadAllText(path);
+
+        // 统一按 LF 归一化。
+        // 原因：仓库 .gitattributes 有 `* text=auto`，git 会在检出时把文本文件
+        // 转成 CRLF（Windows runner 上尤其明显）。但解密/解压出来的内容是 LF，
+        // 直接字符串比较会因行尾不同而失败——本地 autocrlf=input 时看不出来，
+        // CI 上必现。
+        var text = File.ReadAllText(path);
+        return text.Replace("\r\n", "\n").Replace("\r", "\n");
     }
 
     // ─────────────────────────────────────────────
@@ -125,8 +132,10 @@ public sealed class LyricsDecryptionTests
     {
         // zlib 在同一压缩级别下对同一输入是确定的，
         // 因此同一份明文重复加密必须得到同一份密文。
-        var a = EncryptKrc(ReadFixture("krc-encrypted.expected.txt"));
-        var b = EncryptKrc(ReadFixture("krc-encrypted.expected.txt"));
+        // 注意：输入先经 ReadFixture 归一化为 LF，与生成器写入时一致。
+        var plain = ReadFixture("krc-encrypted.expected.txt");
+        var a = EncryptKrc(plain);
+        var b = EncryptKrc(plain);
         Assert.Equal(a, b);
         Assert.Equal(ReadFixture("krc-encrypted.krc"), a);
     }
@@ -134,8 +143,9 @@ public sealed class LyricsDecryptionTests
     [Fact]
     public void QrcEncryption_IsDeterministic()
     {
-        var a = EncryptQrc(ReadFixture("qrc-encrypted.expected.txt"));
-        var b = EncryptQrc(ReadFixture("qrc-encrypted.expected.txt"));
+        var plain = ReadFixture("qrc-encrypted.expected.txt");
+        var a = EncryptQrc(plain);
+        var b = EncryptQrc(plain);
         Assert.Equal(a, b);
         Assert.Equal(ReadFixture("qrc-encrypted.qrc"), a);
     }
