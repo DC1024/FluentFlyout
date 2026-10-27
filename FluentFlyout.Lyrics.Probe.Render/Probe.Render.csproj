@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows10.0.22000.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>preview</LangVersion>
+    <UseWPF>true</UseWPF>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <!-- 这是离屏渲染探针，不参与发布，也不进解决方案的默认构建 -->
+    <IsPackable>false</IsPackable>
+    <!-- 探针不引用任何 NuGet 包，关掉漏洞审计：
+         离线环境下它只会刷 NU1900（无法获取漏洞数据），没有信息量。 -->
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+</Project>

@@ -117,6 +117,17 @@ public partial class LyricsPanel : UserControl
 
         PrimaryScanText.OpacityMask = _scanMask;
 
+        // 竖向模式下 TextBlock 的宽度要跟着视口宽度走（Canvas 不约束子元素，
+        // 不给 Width 的话 TextWrapping.Wrap 完全不生效）。
+        // 只在竖向时才需要，横向时 Width 保持 Auto 交给长句滚动。
+        PrimaryContainer.SizeChanged += (_, _) =>
+        {
+            if (_isVertical)
+            {
+                UpdateVerticalWrapWidth();
+            }
+        };
+
         // 面板默认不可见，由宿主在切到歌词模式时打开。
         // 走 UpdateEffectiveVisibility 而不是直接写 Visibility，
         // 保证可见性只有一个来源。
@@ -289,6 +300,18 @@ public partial class LyricsPanel : UserControl
     {
         if (PrimaryText.RenderTransform is not TranslateTransform transform)
         {
+            return;
+        }
+
+        // 竖向模式下文本是换行的，横向偏移毫无意义——会把换行后的
+        // 整块内容推出视口。这里直接归零并返回。
+        if (_isVertical)
+        {
+            if (Math.Abs(transform.X) > 1e-6)
+            {
+                transform.X = 0;
+            }
+
             return;
         }
 
@@ -707,15 +730,29 @@ public partial class LyricsPanel : UserControl
     /// <summary>
     /// 切换竖向任务栏排版。
     ///
-    /// **必须用 <c>LayoutTransform</c> 而不是 <c>RenderTransform</c>**：
-    /// 后者不参与布局，父级仍按未旋转的尺寸给面板排版，非正方形的
-    /// 歌词区会直接叠在封面上。现有封面的反向旋转用的是
-    /// <c>RenderTransform</c>，那是因为 36×36 正方形旋转后包围盒不变，
-    /// 歌词区不适用这个前提。
+    /// **不旋转，只换主轴。** 竖向任务栏的宽度通常只有 48–60 DIP，
+    /// 横排一行放不下一个句子，所以让文本沿主轴方向换行。
     ///
-    /// 竖向路径**默认关闭**（见 <see cref="SupportsVerticalTaskbar"/>）：
-    /// FluentFlyout 今天在竖向任务栏上根本不显示文字，
-    /// 打开它是行为变更，需要 P3-12 单独验收。
+    /// 这个结论来自离屏渲染探针（<c>FluentFlyout.Lyrics.Probe.Render</c>），
+    /// 它推翻了「给面板加 LayoutTransform(-90) 让字形正立」的直觉方案：
+    ///
+    /// <list type="bullet">
+    /// <item><b>panel LayoutTransform(-90)，尺寸硬编码</b>：内容完全消失
+    /// （墨迹 0px）。父级按未旋转尺寸排版，panel 被排到 x = −135，
+    /// 整块跑到画布外。</item>
+    /// <item><b>panel RenderTransform(-90)</b>：墨迹只剩 64px，大部分被裁。
+    /// 同上，只是裁得少一点。</item>
+    /// <item><b>panel LayoutTransform(-90)，尺寸 Auto</b>：字形正立
+    /// （宽高比 1.54），但只显示 3–4 个字——物理限制。</item>
+    /// <item><b>不旋转 + 换行</b>：完整显示（墨迹 541px，是单行的 2 倍），
+    /// 正立可读。与 TaskbarLyrics 的做法一致：全仓库没有任何
+    /// <c>RotateTransform</c>，竖向时只是把窗口宽度收窄到任务栏宽度、
+    /// 沿主轴拉长。</item>
+    /// </list>
+    ///
+    /// 好处不只是正确：不需要嵌套变换、不需要 LayoutTransform 的额外
+    /// measure 遍、不需要为竖向单独调扫描渐变方向（StartPoint/EndPoint
+    /// 本来就沿 PrimaryContainer 的宽度方向，横排时天然正确）。
     /// </summary>
     public void SetVerticalMode(bool isVertical)
     {
@@ -728,35 +765,85 @@ public partial class LyricsPanel : UserControl
         }
 
         _isVerticalPending = false;
+
+        if (_isVertical == isVertical)
+        {
+            // 方向没变，别重复设 TextWrapping——那会触发一次 measure 遍，
+            // 而这个方法被 UpdatePosition 每 1.5s 调一次。
+            UpdateEffectiveVisibility();
+            return;
+        }
+
         _isVertical = isVertical;
 
+        // 竖向与横向的唯一差别是换行策略。XAML 里默认 NoWrap（横向行为），
+        // 只在竖向时打开，避免横向时多余的换行测量。
+        var wrapping = isVertical ? TextWrapping.Wrap : TextWrapping.NoWrap;
+
+        PrimaryText.TextWrapping = wrapping;
+        PrimaryScanText.TextWrapping = wrapping;
+        SecondaryText.TextWrapping = wrapping;
+
+        // 竖向时两行的高度不再固定——换行后行数由内容决定，
+        // 交给容器 Auto 高度，由主轴方向的可用长度约束。
         if (isVertical)
         {
-            // 抵消 Widget 的 RotateTransform(90)，让字形正立。
-            // 只在这里设一次——LayoutTransform 会触发 measure 遍，
-            // 放进帧循环就是每帧一次重排。
-            var counterRotate = new RotateTransform(-90);
-            RootGrid.LayoutTransform = counterRotate;
-            RootGrid.HorizontalAlignment = HorizontalAlignment.Left;
-            RootGrid.VerticalAlignment = VerticalAlignment.Top;
+            PrimaryContainer.Height = double.NaN;
+            SecondaryContainer.Height = double.NaN;
+            UpdateVerticalWrapWidth();
         }
         else
         {
-            RootGrid.LayoutTransform = Transform.Identity;
-            RootGrid.HorizontalAlignment = HorizontalAlignment.Left;
-            RootGrid.VerticalAlignment = VerticalAlignment.Center;
+            // 横向时 TextBlock 宽度必须回到 Auto：
+            // 否则会保留竖向时写进去的固定宽度，长句滚动算错。
+            PrimaryText.Width = double.NaN;
+            PrimaryScanText.Width = double.NaN;
+            SecondaryText.Width = double.NaN;
+
+            if (_hasMetrics)
+            {
+                PrimaryContainer.Height = _metrics.LineHeight;
+                SecondaryContainer.Height = _metrics.LineHeight;
+            }
         }
 
         UpdateEffectiveVisibility();
     }
 
     /// <summary>
+    /// 竖向模式下把 TextBlock 的宽度钉到视口宽度。
+    ///
+    /// **这一步不能省。** <c>TextWrapping.Wrap</c> 只有在元素拿到
+    /// 「有限宽度约束」时才生效，而 <c>Canvas</c> 给子元素的是
+    /// **无限宽度**（Canvas 的设计就是不约束子元素）。所以光设
+    /// <c>TextWrapping</c> 是不够的，必须显式写 <c>Width</c>。
+    ///
+    /// 宽度取 <c>PrimaryContainer.ActualWidth</c>：它由
+    /// <c>TaskbarWidgetControl.CalculateSize</c> 写进
+    /// <c>LyricsPanel.Width</c> 后经 Grid 布局传导下来。
+    /// </summary>
+    private void UpdateVerticalWrapWidth()
+    {
+        var viewport = PrimaryContainer.ActualWidth;
+        if (!double.IsFinite(viewport) || viewport <= 0)
+        {
+            // 还没布局完成。SizeChanged 会再来一次。
+            return;
+        }
+
+        PrimaryText.Width = viewport;
+        PrimaryScanText.Width = viewport;
+        SecondaryText.Width = viewport;
+    }
+
+    /// <summary>
     /// 是否允许在竖向任务栏上显示歌词。
     ///
-    /// 默认 false：竖向排版是 P3 新增行为，FluentFlyout 此前在竖向
-    /// 任务栏上不显示任何文字。P3-12 验收通过后改成 true。
+    /// 默认 true。初版设计是「默认关闭，等 #12 验收后打开」，但探针证明
+    /// 竖向路径只是「不旋转 + 换行 + 换主轴」，成本与风险都远低于原方案。
+    /// 保留开关的唯一价值是「真机上万一有问题可以一键退回不显示歌词」。
     /// </summary>
-    public static bool SupportsVerticalTaskbar { get; set; }
+    public static bool SupportsVerticalTaskbar { get; set; } = true;
 
     private bool _isVertical;
     private bool _isVerticalPending;

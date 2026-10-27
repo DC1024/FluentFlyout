@@ -268,6 +268,18 @@ public partial class TaskbarWidgetControl : UserControl
             return 0;
         }
 
+        // 竖向任务栏上不旋转排版（见 LyricsPanel.SetVerticalMode 的实测说明），
+        // 文本沿主轴换行，所以「想要多宽」实际是「想要多长」：
+        // 竖向时这个方法的返回值会被 TaskbarWindow 当成主轴长度用。
+        //
+        // 竖向的视觉宽度由任务栏宽度决定（不可协商），所以这里报的是
+        // 主轴方向的理想长度——按「一行大概放得下 4 个汉字」估，
+        // 取一个能让两行歌词完整显示的量。
+        if (_isVertical)
+        {
+            return (LyricsPanel.Metrics.LineHeight * 4) * _scale;
+        }
+
         var coverImageMargin = _isSmallTaskbar ? SmallCoverImageMargin : DefaultCoverImageMargin;
         var contentWidth = LyricsPanel.DesiredContentWidth;
 
@@ -312,12 +324,15 @@ public partial class TaskbarWidgetControl : UserControl
     {
         double height = _isSmallTaskbar ? SmallTaskbarWidgetHeight : DefaultTaskbarWidgetHeight;
 
-        // 竖向任务栏：旋转后视觉高度 = 内部宽度，可用空间反而更大。
-        // 这里先按横向算，竖向的精确排版留给 P3-12 处理。
+        // 竖向任务栏不旋转排版（文本沿主轴换行），行高与横向保持一致，
+        // 所以这里不区分方向——换行后的行数由主轴长度决定，不是由度量决定。
+        //
+        // 唯一的方向差异：小任务栏在竖向时不必强制单行。竖向的物理约束是
+        // 「宽度窄」，而宽度窄正好靠换行解决，不需要再压成一行。
         return LyricsPanelMetrics.Create(
             availableHeight: height,
             preferredFontSize: 13,
-            forceSingleLine: _isSmallTaskbar);
+            forceSingleLine: _isSmallTaskbar && !_isVertical);
     }
 
     /// <summary>
@@ -549,8 +564,20 @@ public partial class TaskbarWidgetControl : UserControl
 
         double logicalWidth;
 
-        if (_isVertical)
+        if (_isVertical && _isLyricsMode)
         {
+            // 竖向任务栏上的歌词：旋转 90° 后，`logicalWidth` 就是**屏幕上的高度**
+            // （沿任务栏主轴的延伸量），`logicalHeight` 是屏幕上的宽度。
+            //
+            // 竖向不旋转排版（见 LyricsPanel.SetVerticalMode 的实测说明），
+            // 所以这里要的是「主轴能给多长」而不是「内容多宽」：
+            // 任务栏越短，能换的行越少。maxLogicalWidth 已经是主轴预算
+            // （TaskbarWindow 对竖向传的是任务栏高度方向的区间），直接用。
+            logicalWidth = maxLogicalWidth;
+        }
+        else if (_isVertical)
+        {
+            // 竖向 + 标题模式：FF 原有行为，竖向不显示文字，只要封面宽度。
             logicalWidth = coverImageMargin;
         }
         else if (_isLyricsMode)

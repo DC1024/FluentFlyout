@@ -205,42 +205,75 @@ WPF 侧的 `LinearGradientBrush` 永远可用，**不存在「平台不支持」
 
 ---
 
-## 4. 竖向任务栏：现有代码没有先例，这是新增行为
+## 4. 竖向任务栏：实测推翻了原推导，改用「不旋转 + 换行」
 
 `SetVerticalMode` 对文字的处理是**直接藏掉**（`:120`），封面和按钮靠
-`RotateTransform(-90)` 抵消 `Widget` 的 `LayoutTransform = RotateTransform(90)`
+`RenderTransform(-90)` 抵消 `Widget` 的 `LayoutTransform = RotateTransform(90)`
 （`TaskbarWindow.xaml.cs:473`）保持正立。也就是说：**FF 今天在竖向任务栏上根本不显示文字**。
 
 歌词必须显示，所以这是行为变更，不是叠加。
 
-### 4.1 几何推导（已验算）
+### 4.1 原推导是错的：探针实测结果
 
-WPF 的 `RotateTransform(θ)` 用 Y 向下的屏幕坐标系，点变换为
-`x' = x·cosθ − y·sinθ`，`y' = x·sinθ + y·cosθ`。
+本节初版给了一个「子元素加 `LayoutTransform(-90)` 就能让字形正立」的推导。
+**这个结论是错的**，由 `FluentFlyout.Lyrics.Probe.Render` 离屏渲染实测推翻。
 
-`Widget` 上的 `RotateTransform(90)` 因此把内部坐标映射到屏幕：
-内部 `+X` → 屏幕**向下**，内部 `+Y` → 屏幕**向左**。内部盒 `(240, 40)` 的视觉包围盒
-变成 `(40, 240)`，且落在 x ∈ (−40, 0) 的负方向上——现有代码已按这个偏移定位
-（`TaskbarWindow.xaml.cs:644-647` 的注释就是讲这件事），歌词层**不要**再去旋转整个 `Widget`。
+探针把与 `TaskbarWindow.PositionWidget` 同构的变换链搭出来，用 `RenderTargetBitmap`
+渲染，按像素统计墨迹包围盒。画布是竖向任务栏的视觉尺寸 60×320：
 
-给歌词 `TextBlock` 加 `LayoutTransform = RotateTransform(-90)`：
+| 方案 | 墨迹 | 包围盒 | 宽高比 | 裁剪 | 结论 |
+|---|---|---|---|---|---|
+| A 基准（横向，不旋转） | 276px | 50×26 | **1.92** | — | 参照：横排文字的宽高比 |
+| B 只转 Widget +90 | 487px | 26×104 | 0.25 | 无 | 字形躺倒——这是要修的问题 |
+| **C Widget+90，panel `LayoutTransform(-90)` 且尺寸硬编码** | **0px** | — | — | **是** | **内容完全消失** |
+| D Widget+90，panel `RenderTransform(-90)` | 64px | 10×26 | 0.38 | 是 | 大部分被裁 |
+| E Widget+90，panel `LayoutTransform(-90)` 且尺寸 `Auto` | 211px | 40×26 | 1.54 | 无 | 字形正立但**只显示 3-4 个字** |
+| F Widget `-90`，panel 不转 | 487px | 26×104 | 0.25 | 无 | 仍然躺倒（净旋转 0，但整体转了 −90） |
+| **G 不旋转，容器做成竖条** | 268px | 51×26 | **1.96** | 无 | 字形正立，但同样只显示 3-4 个字 |
+| **H 不旋转 + `TextWrapping=Wrap`** | **541px** | 51×75 | 0.68 | 无 | **完整显示，正立可读** |
 
-| 子局部方向 | 映射到内部 | 映射到屏幕 |
-|---|---|---|
-| `+X` | `−Y` | 向右 |
-| `+Y` | `+X` | 向下 |
+两条关键结论：
 
-净旋转 `R(90)·R(−90) = R(0)` → 字形**正立**。于是「子局部里宽 1em、`TextWrapping=Wrap`」
-就是屏幕上一列正立字符**自上而下**排列，等价于 TL 的
-`writing-mode: vertical-rl; text-orientation: upright`（`style.css:688-689`）。
+1. **C 方案（初版文档主张的做法）会让内容完全消失。** 原因不是「旋转方向错了」，
+   而是嵌套 `LayoutTransform` 时父级仍按子元素的**未旋转**尺寸给它排版：
+   panel 硬编码 `Width=185`，旋转 −90 后向父级上报 `(40, 185)`，
+   但 `Widget` 本身只有 `(240, 40)` 的内部空间，于是 panel 被排到
+   `x = −135` 的位置——整个跑到画布外，被裁成 0 像素。探针的
+   `panel=185,40 @ -135,20` 这一行就是这个证据。
 
-子局部 `(16, 240)` 经 `LayoutTransform` 后向父级上报 `(240, 16)`：
-宽 240 ≤ 240 ✓、高 16 ≤ 40 ✓；两行叠起来 `(240, 32)` 仍装得下。
+2. **E 和 G 虽然字形正立，但都只显示 3-4 个汉字。** 这是物理限制：
+   竖向任务栏宽度通常只有 48–60 DIP，横排一行放不下一个句子。
+   只有 H（允许换行）能完整显示。
 
-扫描渐变方向跟着改：沿子局部 `+Y`（屏幕向下），即
-`StartPoint=(0,0)`、`EndPoint=(0,height)`。
+### 4.2 结论：竖向任务栏不旋转，改用换行
 
-### 4.2 陷阱：现有代码用 `RenderTransform`，歌词必须用 `LayoutTransform`
+`TaskbarLyrics` 在竖向任务栏上**根本不做任何旋转**——全仓库没有任何
+`RotateTransform` / `LayoutTransform`（`grep -rn "LayoutTransform\|RotateTransform"`
+在 `TaskbarLyrics.App` 下零命中）。它的做法是
+（`EmbeddedTaskbarAnchor.cs:401`）：
+
+```csharp
+if (metrics.IsVertical) width = taskbarWidth;   // 宽度收窄到任务栏宽度
+height = Math.Min(metrics.DesiredWindowHeight, taskbarHeight);  // 高度沿主轴延伸
+```
+
+也就是说：**窗口沿任务栏主轴拉长，文字照常横排**。这与探针的 G/H 结论一致。
+
+**落地策略**：
+
+- 竖向任务栏上，`LyricsPanel` **不设任何 `LayoutTransform`**；
+- 宽度 = 任务栏宽度（减去封面与内边距），高度 = 可用主轴长度；
+- 两个 `TextBlock` 设 `TextWrapping="Wrap"`，让长句沿主轴方向换行；
+- 主轴方向的空间竞争交给 `TaskbarWidthBudget`（它已经把 `isVertical`
+  作为参数，只是主轴从 X 换成 Y）。
+
+这比原方案简单得多：不需要嵌套变换、不需要 `LayoutTransform` 的额外
+measure 遍、不需要为竖向单独调扫描渐变方向（`StartPoint/EndPoint`
+本来就是沿 `PrimaryContainer` 的宽度方向，横排时天然正确）。
+
+### 4.3 保留的陷阱：`RenderTransform` 不参与布局
+
+虽然竖向不再需要旋转，这条仍然要记住，因为**封面和按钮仍在用它**：
 
 `SetVerticalMode` 给封面和按钮的反向旋转用的是 **`RenderTransform`**（`:128`、`:133`）：
 
@@ -251,35 +284,18 @@ SongImageBorder.RenderTransform = (Transform?)counterRotate ?? Transform.Identit
 `RenderTransform` **不参与布局**——元素在父级看来仍是未旋转的尺寸，只是绘制时转一下。
 对 36×36 的封面和 32×32 的按钮完全没问题，因为正方形旋转后包围盒不变。
 
-歌词是非正方形的 `(16, 240)`：用 `RenderTransform` 的话，父级 `StackPanel` 仍按
-`16×240` 给它排版，实际画出来却是横躺的 240 宽——直接叠在封面上。**必须用
-`LayoutTransform`**，让父级看到变换后的 `(240, 16)`。
+**但任何非正方形的元素都不能这么做。** 探针的 D 方案就是反例：
+panel 用 `RenderTransform(-90)` 后，父级仍按 `185×40` 给它排版，
+实际画出来是躺倒的 40×185，直接叠到画布外。
 
-代价是 `LayoutTransform` 会触发额外的 measure/arrange 遍。所以：**只在
-`Orientation` 切换时设置一次，不要每帧设**。
+### 4.4 关于 `SupportsVerticalTaskbar` 开关
 
-### 4.3 建议的落地策略
+初版设计里这个开关是「竖向路径已实现但默认关闭，等 #12 验收后打开」。
+既然竖向路径现在只是「不旋转 + 换行 + 换主轴」，实现成本与风险都远低于原方案，
+**建议直接打开**（`SupportsVerticalTaskbar = true`），在 #12 里用探针的
+H 方案作为验收基线跑四方向任务栏。
 
-给 `LyricsPanel` 加 `Orientation` 属性（`Horizontal` / `Vertical`），竖向路径先实现
-但**默认关闭**，用一个内部开关 `SupportsVerticalTaskbar` 控制：
-
-- 开关关 → 竖向任务栏上歌词 `Collapsed`，行为与今天完全一致（不劣化）；
-- 开关开 → 走 4.1 的排版；
-- #12 的验收就是把这个开关打开跑一遍四方向任务栏。
-
-TL 在竖向下还用 `flex-direction: row-reverse`（`style.css:677`）把两行反过来排，
-WPF 侧对应 `StackPanel` 的子项顺序，需要实测确认读向。
-
-### 4.2 建议的落地策略
-
-给 `LyricsPanel` 加 `Orientation` 属性（`Horizontal` / `Vertical`），竖向路径先实现
-但**默认关闭**，用一个内部开关 `SupportsVerticalTaskbar` 控制：
-
-- 开关关 → 竖向任务栏上歌词 `Collapsed`，行为与今天完全一致（不劣化）；
-- 开关开 → 走 4.1 的排版；
-- #12 的验收就是把这个开关打开跑一遍四方向任务栏。
-
----
+保留开关的价值仅在于「万一真机上发现竖向有问题，可以一键退回不显示歌词」。
 
 ## 5. 小任务栏（28px）必须单行
 
@@ -321,3 +337,35 @@ WPF 侧对应 `StackPanel` 的子项顺序，需要实测确认读向。
 
 **#11 的 Core 部分（区间结构 + `TryPlace`）可以立刻开写，完全不依赖 WPF**，
 适合与 #8/#9 并行——这是 P3 阶段唯一真正能并行的切口。
+
+### 7.1 已完成情况（2026-10-27）
+
+| # | 状态 | 提交 |
+|---|---|---|
+| #8 | 完成 | `35660ea` |
+| #9 | 完成 | `1eaf4ae` |
+| #10 | 完成 | `0d408aa` |
+| #11 | 完成 | `61ec39f` |
+| #12 | 完成 | 见本节 |
+| #13 | 待办 | — |
+
+### 7.2 竖向几何探针
+
+`FluentFlyout.Lyrics.Probe.Render` 是一个离屏渲染探针，用来**实证**竖向任务栏的
+排版方案，而不是靠推导。它把与 `TaskbarWindow.PositionWidget` 同构的变换链
+搭出来，用 `RenderTargetBitmap` 渲染，再按像素统计墨迹包围盒。
+
+```bash
+dotnet run --project FluentFlyout.Lyrics.Probe.Render/Probe.Render.csproj
+```
+
+- 退出码 0 = 全部断言通过，可直接作为 CI 门禁；
+- PNG 输出到 `bin/.../out/`，已归档的对照图在 `docs/lyrics-integration/probe/`；
+- 断言里有一条**回归护栏**：C 方案（嵌套 `LayoutTransform` + 硬编码尺寸）
+  必须保持「内容消失」。如果哪天它突然有内容了，说明 WPF 布局行为变了，
+  4.1 节的结论需要重新验证。
+
+这个探针的价值在于：4.1 节的原始推导看起来完全合理（`R(90)·R(−90) = R(0)`），
+但实测结果是内容被排到画布外、墨迹 0 像素。**几何推理在布局系统里不可靠，
+必须渲染出来看。**
+
