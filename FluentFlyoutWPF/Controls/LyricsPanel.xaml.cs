@@ -32,18 +32,6 @@ namespace FluentFlyout.Controls;
 /// </summary>
 public partial class LyricsPanel : UserControl
 {
-    /// <summary>
-    /// 扫描渐变的羽化宽度比例（相对单行文本宽度）。
-    ///
-    /// 0.12 取自 TL 的 <c>--word-scan-feather-width: 0.12em</c>，
-    /// 换算成「相对行宽」后视觉上接近。太小会看到硬边，太大会糊成一片。
-    /// </summary>
-    private const double ScanFeatherRatio = 0.12;
-
-    /// <summary>羽化宽度的上下限（DIP），避免极短/极长句子下比例失真。</summary>
-    private const double MinFeatherWidth = 2;
-    private const double MaxFeatherWidth = 24;
-
     private readonly LinearGradientBrush _scanMask;
 
     private LyricDisplayFrame? _frame;
@@ -55,6 +43,31 @@ public partial class LyricsPanel : UserControl
 
     /// <summary>最近一次设置的扫描进度，避免重复写同一批 Offset。</summary>
     private double _lastScanProgress = -1;
+
+    /// <summary>
+    /// 当前渲染档位。
+    ///
+    /// 默认 <see cref="ScanRenderMode.Gradient"/>。自适应降级由
+    /// <see cref="ReportFrameTime"/> 驱动：连续多帧超预算就降一档，
+    /// 且**不会自动升回来**——避免在临界点来回抖动
+    /// （降级→变快→升级→又变慢，用户会看到高亮方式反复切换）。
+    /// 只有换行时才重新评估一次。
+    /// </summary>
+    private ScanRenderMode _scanMode = ScanRenderMode.Gradient;
+
+    /// <summary>
+    /// 单帧渲染预算（毫秒）。30fps 的预算是 33ms，
+    /// 这里取一半作为「还有余量」的门槛。
+    /// </summary>
+    public const double FrameBudgetMilliseconds = 8;
+
+    /// <summary>连续超预算多少帧后降级。取 5 约等于 165ms，用户还来不及察觉。</summary>
+    private const int FramesBeforeDowngrade = 5;
+
+    private int _slowFrameCount;
+
+    /// <summary>累积的降级次数，供诊断与设置界面展示。</summary>
+    public int DowngradeCount { get; private set; }
 
     /// <summary>
     /// 面板内容宽度变化。仅在文本真的换行且宽度差超过阈值时触发，
@@ -146,6 +159,11 @@ public partial class LyricsPanel : UserControl
     {
         ArgumentNullException.ThrowIfNull(frame);
 
+        var lineChanged = !string.Equals(
+            _frame?.CurrentLine,
+            frame.CurrentLine,
+            StringComparison.Ordinal);
+
         _frame = frame;
 
         var primary = frame.CurrentLine ?? string.Empty;
@@ -153,6 +171,13 @@ public partial class LyricsPanel : UserControl
         {
             PrimaryText.Text = primary;
             PrimaryScanText.Text = primary;
+        }
+
+        // 换行时给一次重新评估渲染档位的机会。
+        // 只在真的换行时做——每帧都重置等于降级从未生效。
+        if (lineChanged)
+        {
+            ResetScanModeForNewLine();
         }
 
         UpdateSecondaryLine(frame);
@@ -241,7 +266,14 @@ public partial class LyricsPanel : UserControl
     }
 
     /// <summary>
-    /// 设置扫描进度。只改三个 <c>GradientStop.Offset</c>，不碰任何布局属性。
+    /// 设置扫描进度。
+    ///
+    /// 三档渲染路径的差别只在「怎么裁出已唱部分」：
+    /// - <see cref="ScanRenderMode.Gradient"/>：改三个 <c>GradientStop.Offset</c>；
+    /// - <see cref="ScanRenderMode.Clip"/>：改一个 <c>RectangleGeometry.Rect</c>；
+    /// - <see cref="ScanRenderMode.WholeLine"/>：不裁，覆盖层直接藏起来。
+    ///
+    /// 三条路径都不碰布局属性。
     /// </summary>
     private void SetScanProgress(double progress)
     {
@@ -254,6 +286,14 @@ public partial class LyricsPanel : UserControl
 
         _lastScanProgress = progress;
 
+        if (_scanMode == ScanRenderMode.WholeLine)
+        {
+            // 降级到整行高亮：覆盖层不需要了，主行恢复全亮度。
+            PrimaryScanText.Visibility = Visibility.Collapsed;
+            PrimaryText.Opacity = LyricsPanelMetrics.PrimaryOpacity;
+            return;
+        }
+
         var width = PrimaryContainer.ActualWidth;
         if (!double.IsFinite(width) || width <= 0)
         {
@@ -261,18 +301,134 @@ public partial class LyricsPanel : UserControl
             width = 1;
         }
 
-        var scanX = progress * width;
-        var feather = Math.Clamp(width * ScanFeatherRatio, MinFeatherWidth, MaxFeatherWidth);
+        // 几何计算抽到 Core 里（ScanGeometry），可以精确单测边界。
+        var geometry = ScanGeometry.Create(progress, width);
 
-        // 羽化不能超出扫描点两端，否则短句上会看到「整行半透明」。
-        feather = Math.Min(feather, Math.Min(scanX, width - scanX));
+        if (_scanMode == ScanRenderMode.Clip)
+        {
+            ApplyClipScan(geometry);
+            return;
+        }
 
-        _scanMask.StartPoint = new Point(0, 0);
-        _scanMask.EndPoint = new Point(width, 0);
+        ApplyGradientScan(geometry, width);
+    }
+
+    /// <summary>
+    /// 渐变遮罩：已唱部分不透明 → 羽化 → 未唱部分透明。
+    /// 视觉最好，成本也最高。
+    /// </summary>
+    private void ApplyGradientScan(ScanGeometry geometry, double width)
+    {
+        PrimaryScanText.OpacityMask = _scanMask;
+
+        // 从 Clip 档升回 Gradient 时清掉残留的裁剪区，
+        // 否则覆盖层会同时受 Clip 与 OpacityMask 限制，看起来像「缺一块」。
+        if (PrimaryScanText.Clip is not null)
+        {
+            PrimaryScanText.Clip = null;
+        }
+
+        // StartPoint/EndPoint 只在宽度变化时改；宽度没变就不动，
+        // 减少 WPF 对画刷的失效标记。
+        if (_scanMask.EndPoint.X != width)
+        {
+            _scanMask.StartPoint = new Point(0, 0);
+            _scanMask.EndPoint = new Point(width, 0);
+        }
 
         _scanMask.GradientStops[0].Offset = 0;
-        _scanMask.GradientStops[1].Offset = Math.Max(0, scanX - feather);
-        _scanMask.GradientStops[2].Offset = Math.Min(width, scanX + feather);
+        _scanMask.GradientStops[1].Offset = geometry.SolidEnd;
+        _scanMask.GradientStops[2].Offset = geometry.FadeStart;
+    }
+
+    /// <summary>
+    /// 硬边裁剪：没有羽化，边界是硬的，但成本比渐变低。
+    ///
+    /// 用 <c>UIElement.Clip</c> 而不是 <c>OpacityMask</c>：
+    /// <c>OpacityMask</c> 的类型是 <see cref="Brush"/>，塞不进
+    /// <c>RectangleGeometry</c>；要硬边遮罩就得包一层
+    /// <c>DrawingBrush</c>，反而比直接 <c>Clip</c> 更贵。
+    /// 每帧只改一个 <c>Rect</c>。
+    /// </summary>
+    private void ApplyClipScan(ScanGeometry geometry)
+    {
+        if (PrimaryScanText.Clip is not RectangleGeometry rect)
+        {
+            rect = new RectangleGeometry();
+            PrimaryScanText.Clip = rect;
+        }
+
+        // 用 FadeStart 而不是 ScanX：硬边模式下把羽化区也算进已唱部分，
+        // 否则边界会看起来比渐变模式「慢半拍」。
+        rect.Rect = new Rect(0, 0, Math.Max(0, geometry.FadeStart), PrimaryContainer.ActualHeight);
+    }
+
+    /// <summary>
+    /// 上报一帧的实际耗时，用于自适应降级。
+    ///
+    /// **注意这是托管侧耗时的近似值**：它测的是
+    /// <see cref="ApplyFrame"/> 从头到尾的时间，包含文本赋值与
+    /// 画刷属性写入，但**不含** WPF 之后在渲染线程合成渐变遮罩的成本。
+    /// 真实帧时间要在 <c>CompositionTarget.Rendering</c> 上量。
+    ///
+    /// 用它做降级判据的理由：托管侧耗时异常升高时，渲染侧几乎必然
+    /// 也在恶化（文本赋值触发 <c>TextBlock</c> 重新排版，是主因）。
+    /// 作为「预警指标」足够，作为精确性能数据不够。
+    ///
+    /// 连续 <see cref="FramesBeforeDowngrade"/> 帧超过
+    /// <see cref="FrameBudgetMilliseconds"/> 就降一档。
+    /// 刻意不做「变快就升回来」——那会在临界点来回抖动，
+    /// 用户看到的是高亮方式反复切换，比一直用低档更难受。
+    /// </summary>
+    public void ReportFrameTime(double milliseconds)
+    {
+        if (!double.IsFinite(milliseconds) || milliseconds < 0)
+        {
+            return;
+        }
+
+        if (milliseconds <= FrameBudgetMilliseconds)
+        {
+            _slowFrameCount = 0;
+            return;
+        }
+
+        _slowFrameCount++;
+        if (_slowFrameCount < FramesBeforeDowngrade)
+        {
+            return;
+        }
+
+        _slowFrameCount = 0;
+
+        if (_scanMode == ScanRenderMode.Gradient)
+        {
+            _scanMode = ScanRenderMode.Clip;
+            DowngradeCount++;
+            _lastScanProgress = -1; // 强制下一次重画
+        }
+        else if (_scanMode == ScanRenderMode.Clip)
+        {
+            _scanMode = ScanRenderMode.WholeLine;
+            DowngradeCount++;
+        }
+    }
+
+    /// <summary>
+    /// 重置渲染档位。换行时调用，给一次重新评估的机会。
+    /// </summary>
+    private void ResetScanModeForNewLine()
+    {
+        // 只在「上一轮降过级」时才重置，否则正常播放中每句都重置
+        // 等于降级从未生效。
+        if (DowngradeCount == 0)
+        {
+            return;
+        }
+
+        _scanMode = ScanRenderMode.Gradient;
+        _slowFrameCount = 0;
+        _lastScanProgress = -1;
     }
 
     /// <summary>

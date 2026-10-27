@@ -237,23 +237,30 @@ public partial class TaskbarWidgetControl : UserControl
 
     /// <summary>
     /// 更新一帧歌词。这是热路径（最多 30 次/秒），
-    /// 只改文本与扫描遮罩，<b>不触发重排</b>。
+    /// 只改文本与扫描遮罩，<b>不触发重排、不做文本测量</b>。
     /// </summary>
-    /// <returns>
-    /// 内容需要的宽度（DIP）。宿主据此决定是否请求一次任务栏重排——
-    /// 面板自己不做这个决定，因为它不知道任务栏可用区间。
-    /// </returns>
-    public double UpdateLyricsFrame(LyricDisplayFrame frame)
+    /// <remarks>
+    /// 宽度不在这里返回：<see cref="LyricsPanel.MeasureDesiredWidth"/>
+    /// 内部要构造 <c>FormattedText</c>，那是每帧几十微秒的固定开销，
+    /// 而宽度只在换行时才可能变。改由面板的
+    /// <c>DesiredWidthChanged</c> 事件推送（带 4 DIP 阈值）。
+    /// </remarks>
+    public void UpdateLyricsFrame(LyricDisplayFrame frame)
     {
         ArgumentNullException.ThrowIfNull(frame);
 
         if (!_isLyricsMode)
         {
-            return 0;
+            return;
         }
 
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         LyricsPanel.ApplyFrame(frame);
-        return LyricsPanel.MeasureDesiredWidth();
+        stopwatch.Stop();
+
+        // 把本帧耗时喂给自适应降级器。连续多帧超预算会降档，
+        // 但不自动升回——避免在临界点抖动。
+        LyricsPanel.ReportFrameTime(stopwatch.Elapsed.TotalMilliseconds);
     }
 
     /// <summary>
