@@ -1,0 +1,151 @@
+name: build-portable
+
+# 产出「解压即用」的便携版目录，供人工下载测试。
+#
+# 与 build-msix.yml 的分工：
+#   build-msix.yml   → MSIX 安装包（StoreUpload 布局 + 安装脚本），面向正式分发
+#   build-portable.yml → 裸 exe 目录，面向「下载下来双击就能跑」的快速验证
+#
+# 为什么需要这个工作流：MSIX 包未签名（AppxPackageSigningEnabled=false），
+# 测试机需要开发者模式或自签证书才能装。歌词功能处在人工验收阶段，
+# 每次验证都走一遍安装流程成本太高。便携版免安装、免证书、删目录即卸载。
+#
+# 为什么用 "GitHub Release" 配置：csproj 里只有该配置定义 GITHUB_RELEASE
+# 编译符号，LicenseManager 靠它跳过 Microsoft Store 授权检查。
+# 用 Release 配置编译出来的包会去连 Store，自编译场景下必然拿不到授权。
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '要构建的分支 / tag / commit'
+        required: false
+        default: ''
+      upload_arm64:
+        description: '同时构建 ARM64'
+        type: boolean
+        default: false
+  # 允许从任意 feature 分支手动触发（workflow_dispatch 本身已支持），
+  # 下面这条 push 触发只针对歌词相关目录，避免每次改动都出包。
+  push:
+    branches:
+      - master
+      - 'p3-native-render'
+    paths:
+      - 'FluentFlyout.Lyrics/**'
+      - 'FluentFlyoutWPF/**'
+      - '.github/workflows/build-portable.yml'
+
+concurrency:
+  group: build-portable-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  CONFIGURATION: 'GitHub Release'
+
+jobs:
+  build:
+    name: 便携版 (${{ matrix.rid }})
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            platform: x64
+            arm64: false
+          - rid: win-arm64
+            platform: ARM64
+            arm64: true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: 缓存 NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # ARM64 默认不构建，需要时手动勾选。
+      # 注意 inputs.upload_arm64 是 boolean，展开成 "true" / "false"（小写），
+      # github.event.inputs 里则是 "True" / "False"，两种都按忽略大小写比较。
+      - name: 判定是否跳过
+        id: skip
+        shell: pwsh
+        run: |
+          $isArm = ('${{ matrix.arm64 }}' -eq 'true')
+          $wantArm = ('${{ inputs.upload_arm64 }}' -eq 'true')
+          $skip = $isArm -and (-not $wantArm)
+          "skip=$($skip.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
+      # 主工程有 36 条既有警告（基线），不加 -warnaserror，
+      # 否则这个工作流会因为与歌词无关的历史警告永远红。
+      # 质量门槛由 verify.yml 的 J1/J2/J3 负责。
+      - name: 发布
+        if: steps.skip.outputs.skip != 'true'
+        run: >
+          dotnet publish FluentFlyoutWPF/FluentFlyout.csproj
+          -c "${{ env.CONFIGURATION }}"
+          -r ${{ matrix.rid }}
+          --self-contained false
+          -p:Platform=${{ matrix.platform }}
+          -o publish/${{ matrix.rid }}
+
+      # 便携版判定：主 exe + 歌词引擎 dll 都必须在。
+      # 少了任何一个，说明发布配置或项目引用出了问题，不该把坏包发出去。
+      - name: 校验产物
+        if: steps.skip.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $dir = "publish/${{ matrix.rid }}"
+          $required = @('FluentFlyout.exe', 'FluentFlyout.dll', 'FluentFlyout.Lyrics.dll')
+          $missing = @()
+          foreach ($f in $required) {
+            if (-not (Test-Path (Join-Path $dir $f))) { $missing += $f }
+          }
+          if ($missing.Count -gt 0) {
+            Write-Error "产物缺失：$($missing -join ', ')"
+            exit 1
+          }
+          $count = (Get-ChildItem $dir -Recurse -File).Count
+          $size = [math]::Round((Get-ChildItem $dir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 1)
+          "| 项 | 值 |" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          "|---|---|" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          "| RID | ${{ matrix.rid }} |" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          "| 配置 | ${{ env.CONFIGURATION }} |" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          "| 提交 | ``${{ github.sha }}`` |" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          "| 文件数 | $count |" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          "| 体积 | $size MB |" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          "校验通过：$($required -join ', ')" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+
+      - name: 打包
+        if: steps.skip.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $zip = "FluentFlyout-portable-${{ matrix.rid }}.zip"
+          Compress-Archive -Path "publish/${{ matrix.rid }}/*" -DestinationPath $zip -CompressionLevel Optimal
+          Get-Item $zip | ForEach-Object {
+            "下载后解压，双击 FluentFlyout.exe 即可运行（需 .NET 10 桌面运行时）。" |
+              Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: 归档便携版
+        if: steps.skip.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: FluentFlyout-portable-${{ matrix.rid }}
+          path: FluentFlyout-portable-${{ matrix.rid }}.zip
+          if-no-files-found: error
+          retention-days: 30
