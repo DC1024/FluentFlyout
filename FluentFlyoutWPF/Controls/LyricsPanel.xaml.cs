@@ -66,6 +66,18 @@ public partial class LyricsPanel : UserControl
 
     private int _slowFrameCount;
 
+    /// <summary>
+    /// 当前主行文本的宽度缓存（DIP）。
+    ///
+    /// 只在文本或字号变化时重新测量。滚动与宽度上报都要用，
+    /// 但两者都在热路径上——每帧构造 <c>FormattedText</c> 是
+    /// 几十微秒的固定开销，30fps 下就是 1% 的 CPU 白烧。
+    /// </summary>
+    private double _cachedPrimaryTextWidth;
+
+    private string _cachedMeasuredText = string.Empty;
+    private double _cachedMeasuredFontSize = -1;
+
     /// <summary>累积的降级次数，供诊断与设置界面展示。</summary>
     public int DowngradeCount { get; private set; }
 
@@ -146,7 +158,27 @@ public partial class LyricsPanel : UserControl
 
         // 度量变了，之前记的宽度作废，下次帧更新会重新上报。
         _lastReportedWidth = -1;
+
+        // 字号变了文本宽度也会变，缓存必须失效。
+        _cachedMeasuredFontSize = -1;
+        UpdatePrimaryTextWidth();
     }
+
+    /// <summary>
+    /// 当前是否处于纯音乐态（帧里 <c>IsPureMusic</c> 为 true）。
+    /// 宿主据此决定是否把频谱控件显示出来。
+    /// </summary>
+    public bool IsPureMusic { get; private set; }
+
+    /// <summary>
+    /// 纯音乐态发生变化。宿主订阅它来切换频谱的可见性。
+    /// </summary>
+    /// <remarks>
+    /// 为什么由面板上报而不是宿主自己判断：<c>IsPureMusic</c> 来自
+    /// <c>LyricDocument</c> 的启发式判定（只有一行且含「纯音乐」），
+    /// 宿主拿不到。面板已经是帧的唯一消费者，顺手转发成本最低。
+    /// </remarks>
+    public event EventHandler<bool>? PureMusicChanged;
 
     /// <summary>
     /// 应用一帧歌词。这是热路径——每帧最多调用 30 次。
@@ -171,6 +203,7 @@ public partial class LyricsPanel : UserControl
         {
             PrimaryText.Text = primary;
             PrimaryScanText.Text = primary;
+            UpdatePrimaryTextWidth();
         }
 
         // 换行时给一次重新评估渲染档位的机会。
@@ -180,10 +213,87 @@ public partial class LyricsPanel : UserControl
             ResetScanModeForNewLine();
         }
 
+        UpdatePureMusicState(frame.IsPureMusic);
         UpdateSecondaryLine(frame);
         UpdateScan(frame);
+        UpdateScroll(frame);
 
         ReportDesiredWidth();
+    }
+
+    /// <summary>
+    /// 更新纯音乐态。只在真的变化时触发事件，
+    /// 避免宿主每帧都被通知一次。
+    /// </summary>
+    private void UpdatePureMusicState(bool isPureMusic)
+    {
+        if (IsPureMusic == isPureMusic)
+        {
+            return;
+        }
+
+        IsPureMusic = isPureMusic;
+
+        if (isPureMusic)
+        {
+            // 纯音乐没有歌词可显示，清掉文本避免残留上一首的内容。
+            // 但**不清空可见性**——面板本身仍要占位，由宿主决定
+            // 是把面板藏起来换频谱，还是两者并列。
+            PrimaryText.Text = string.Empty;
+            PrimaryScanText.Text = string.Empty;
+            SecondaryText.Text = string.Empty;
+            PrimaryScanText.Visibility = Visibility.Collapsed;
+            SecondaryContainer.Visibility = Visibility.Collapsed;
+            PrimaryText.Opacity = LyricsPanelMetrics.PrimaryOpacity;
+            _isScanning = false;
+            _lastScanProgress = -1;
+            _cachedPrimaryTextWidth = 0;
+            _cachedMeasuredText = string.Empty;
+        }
+
+        PureMusicChanged?.Invoke(this, isPureMusic);
+    }
+
+    /// <summary>
+    /// 更新长句滚动。
+    ///
+    /// 只在文本真的超出视口时才滚：短句滚动会让整句一直在动，
+    /// 读起来比截断更累。这是与 <see cref="ScrollGeometry"/> 一致的判断。
+    /// </summary>
+    /// <remarks>
+    /// 文本宽度走 <see cref="_cachedPrimaryTextWidth"/> 缓存，不在每帧
+    /// 重新 <see cref="MeasureText"/>——文本只在换行时变，宽度也只在那时变。
+    /// </remarks>
+    private void UpdateScroll(LyricDisplayFrame frame)
+    {
+        if (PrimaryText.RenderTransform is not TranslateTransform transform)
+        {
+            return;
+        }
+
+        var viewportWidth = PrimaryContainer.ActualWidth;
+        if (!double.IsFinite(viewportWidth) || viewportWidth <= 0)
+        {
+            // 还没布局完成，下一次帧更新会带来正确宽度。
+            return;
+        }
+
+        var geometry = ScrollGeometry.Create(
+            lineProgress: frame.LineProgress,
+            textWidth: _cachedPrimaryTextWidth,
+            viewportWidth: viewportWidth,
+            // 帧里没有行时长，只能按进度线性滚（ScrollGeometry 的
+            // 未知时长分支）。有音节数据时逐字扫描已经给出了时间感，
+            // 这里再精确也不会更准。
+            lineDurationSeconds: 0,
+            enabled: FluentFlyout.Classes.Settings.SettingsManager.Current.TaskbarWidgetScrollingEnabled);
+
+        // 只有偏移真的变了才写属性，避免每帧触发 TranslateTransform 的
+        // 失效传播。1e-6 是 double 精度级别，不影响视觉。
+        if (Math.Abs(transform.X - geometry.OffsetX) > 1e-6)
+        {
+            transform.X = geometry.OffsetX;
+        }
     }
 
     /// <summary>
@@ -508,6 +618,25 @@ public partial class LyricsPanel : UserControl
             // 绝不能因为一次测量失败就把面板宽度设成 0。
             return 0;
         }
+    }
+
+    /// <summary>
+    /// 刷新主行文本宽度缓存。文本或字号变化时调用，不进帧循环。
+    /// </summary>
+    private void UpdatePrimaryTextWidth()
+    {
+        var fontSize = _hasMetrics ? _metrics.FontSize : PrimaryText.FontSize;
+
+        // 文本与字号都没变就跳过——调用方可能只是防御性地调了一下。
+        if (string.Equals(_cachedMeasuredText, PrimaryText.Text, StringComparison.Ordinal) &&
+            Math.Abs(_cachedMeasuredFontSize - fontSize) < 0.01)
+        {
+            return;
+        }
+
+        _cachedMeasuredText = PrimaryText.Text ?? string.Empty;
+        _cachedMeasuredFontSize = fontSize;
+        _cachedPrimaryTextWidth = MeasureText(_cachedMeasuredText, fontSize);
     }
 
     /// <summary>

@@ -173,9 +173,13 @@ public partial class TaskbarWidgetControl : UserControl
     {
         if (_isLyricsMode)
         {
-            LyricsPanel.SetActive(true);
+            // 歌词模式下标题区一律隐藏——不管是显示歌词还是让位给频谱。
             SongInfoStackPanel.Visibility = Visibility.Collapsed;
             SongArtistContainer.Visibility = Visibility.Collapsed;
+
+            // 纯音乐态：歌词面板让位给频谱。频谱是独立控件，
+            // 由 TaskbarWindow.PositionVisualizer 定位，不在这里管。
+            LyricsPanel.SetActive(!LyricsPanel.IsPureMusic);
             return;
         }
 
@@ -205,6 +209,11 @@ public partial class TaskbarWidgetControl : UserControl
         if (enabled)
         {
             LyricsPanel.ApplyMetrics(metrics ?? BuildLyricsMetrics());
+            LyricsPanel.PureMusicChanged += OnLyricsPureMusicChanged;
+        }
+        else
+        {
+            LyricsPanel.PureMusicChanged -= OnLyricsPureMusicChanged;
         }
 
         UpdateTextRegionVisibility();
@@ -220,6 +229,20 @@ public partial class TaskbarWidgetControl : UserControl
         {
             UpdateMarquees();
         }
+    }
+
+    /// <summary>
+    /// 纯音乐态变化。纯音乐没有歌词可显示，隐藏歌词面板，
+    /// 让频谱接管这块空间。
+    /// </summary>
+    /// <remarks>
+    /// 互斥规则（与实施计划的 P3-6 一致）：**歌词模式优先**，
+    /// 频谱只在纯音乐态作为降级显示。这样用户开了歌词就不会同时
+    /// 看到两套可视化在抢任务栏空间。
+    /// </remarks>
+    private void OnLyricsPureMusicChanged(object? sender, bool isPureMusic)
+    {
+        UpdateTextRegionVisibility();
     }
 
     /// <summary>按当前任务栏尺寸推导歌词度量。</summary>
@@ -254,9 +277,19 @@ public partial class TaskbarWidgetControl : UserControl
             return;
         }
 
+        // 纯音乐态下歌词面板是隐藏的，不必更新它的可视树——
+        // 但**必须**仍然调用 ApplyFrame：IsPureMusic 状态与
+        // PureMusicChanged 事件都从那里来，跳过就永远退不出纯音乐态。
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         LyricsPanel.ApplyFrame(frame);
         stopwatch.Stop();
+
+        if (!LyricsPanel.IsShowing)
+        {
+            // 隐藏时不喂帧耗时：隐藏元素不渲染，量到的时间没有意义，
+            // 喂进去只会误触发降级。
+            return;
+        }
 
         // 把本帧耗时喂给自适应降级器。连续多帧超预算会降档，
         // 但不自动升回——避免在临界点抖动。
