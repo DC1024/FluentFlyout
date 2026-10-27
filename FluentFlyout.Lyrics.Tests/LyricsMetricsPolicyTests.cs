@@ -259,4 +259,87 @@ public sealed class LyricsMetricsPolicyTests
             }
         }
     }
+
+    // ---------- 竖向的宽度约束（短边 → 字号） ----------
+
+    [Fact]
+    public void VerticalNarrowTaskbarCapsFontSoTwoGlyphsFit()
+    {
+        // 28 DIP 短边 + 用户把字号拉到 20：不夹的话一行只站得下一个汉字，
+        // 30 字的长句变成一座独字塔（截图矩阵 edge-vertical-v28-font20 复现过，
+        // 而且顺带被 480 的长度上限截在半句）。
+        var metrics = LyricsMetricsPolicy.Create(
+            isVertical: true,
+            isSmallTaskbar: true,
+            preferredFontSize: 20);
+
+        Assert.Equal(
+            LyricsMetricsPolicy.GetVerticalMaxFontSize(isSmallTaskbar: true),
+            metrics.FontSize,
+            precision: 6);
+
+        Assert.True(
+            metrics.FontSize * LyricsMetricsPolicy.MinimumGlyphsPerLine
+                <= LyricsMetricsPolicy.SmallTaskbarCrossSize,
+            $"字号 {metrics.FontSize} 放不下两个汉字（短边 {LyricsMetricsPolicy.SmallTaskbarCrossSize}）");
+    }
+
+    [Fact]
+    public void VerticalNarrowTaskbarKeepsDefaultFont()
+    {
+        // 默认 13px 在 28 DIP 短边里本来就能站两个汉字（26 ≤ 28），
+        // 不该被这条约束顺手压小一圈。
+        var metrics = LyricsMetricsPolicy.Create(isVertical: true, isSmallTaskbar: true);
+
+        Assert.Equal(LyricsMetricsPolicy.DefaultPreferredFontSize, metrics.FontSize, precision: 6);
+    }
+
+    [Fact]
+    public void VerticalNormalTaskbarKeepsLargeFont()
+    {
+        // 60 DIP 宽的真实竖向任务栏放到 20px 也够两个汉字。
+        //
+        // 但策略层只知道「是不是小任务栏」这个布尔量，短边取的是规范值
+        // DefaultTaskbarCrossSize(40)，于是上限是 19.5——略小于用户要的 20。
+        // 这是**有意保守**：真实竖向任务栏宽度 ≥ 40，按 40 推出的上限
+        // 在任何形态下都成立。断言写成属性而不是写死 19.5，避免以后
+        // 调常量时被测试卡住。
+        var metrics = LyricsMetricsPolicy.Create(
+            isVertical: true,
+            isSmallTaskbar: false,
+            preferredFontSize: 20);
+
+        Assert.Equal(
+            LyricsMetricsPolicy.GetVerticalMaxFontSize(isSmallTaskbar: false),
+            metrics.FontSize,
+            precision: 6);
+
+        Assert.True(
+            metrics.FontSize * LyricsMetricsPolicy.MinimumGlyphsPerLine
+                <= LyricsMetricsPolicy.DefaultTaskbarCrossSize,
+            $"字号 {metrics.FontSize} 放不下两个汉字（短边 {LyricsMetricsPolicy.DefaultTaskbarCrossSize}）");
+
+        // 只压到几何上限，不该被压得比默认字号还小。
+        Assert.True(metrics.FontSize >= LyricsMetricsPolicy.DefaultPreferredFontSize);
+    }
+
+    [Fact]
+    public void HorizontalTaskbarIsNotConstrainedByVerticalWidthCap()
+    {
+        // 横向的短边约束的是「行高」（已由 availableHeight 处理），
+        // 不该被竖向那条「两个汉字」规则误伤。
+        //
+        // 20px 字在 40 DIP 高里装不下两行 → 降级单行并放大 1.15 倍，
+        // 这是横向唯一正确的行为。
+        var metrics = LyricsMetricsPolicy.Create(
+            isVertical: false,
+            isSmallTaskbar: false,
+            preferredFontSize: 20);
+
+        Assert.True(metrics.IsSingleLine);
+        Assert.Equal(
+            Math.Min(20 * LyricsPanelMetrics.SingleLineFontScale, LyricsMetricsPolicy.DefaultTaskbarCrossSize / LyricsPanelMetrics.LineHeightFactor),
+            metrics.FontSize,
+            precision: 6);
+    }
 }

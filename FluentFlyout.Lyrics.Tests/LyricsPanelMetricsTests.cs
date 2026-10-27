@@ -211,4 +211,54 @@ public sealed class LyricsPanelMetricsTests
                 $"高度 {height} 下总高 {metrics.TotalHeight} 超出过多");
         }
     }
+
+    // ---------- 几何字号上限（maxFontSize） ----------
+
+    [Fact]
+    public void MaxFontSizeCapsDoubleLineFont()
+    {
+        // 双行分支：字号同时受「两行总高」与几何上限约束，取小者。
+        var metrics = LyricsPanelMetrics.Create(40, 13, maxFontSize: 10);
+
+        Assert.Equal(10, metrics.FontSize, precision: 6);
+        Assert.Equal(10 * LyricsPanelMetrics.LineHeightFactor, metrics.LineHeight, precision: 6);
+    }
+
+    [Fact]
+    public void MaxFontSizeAppliesToSingleLineToo()
+    {
+        // 单行分支会主动放大 1.15 倍，同样要受几何上限约束——
+        // 否则竖排用户一开单行就把「一行两个汉字」的保证丢掉了。
+        var metrics = LyricsPanelMetrics.Create(
+            availableHeight: 40,
+            preferredFontSize: 13,
+            forceSingleLine: true,
+            maxFontSize: 12);
+
+        Assert.True(metrics.IsSingleLine);
+        Assert.Equal(12, metrics.FontSize, precision: 6);
+    }
+
+    [Fact]
+    public void MaxFontSizeCannotPushFontBelowFloor()
+    {
+        // 极窄短边算出的上限会小于下限，最终仍抬到 9：
+        // 宁可一个字一行，也不给 7px 的糊字。
+        var metrics = LyricsPanelMetrics.Create(40, 13, maxFontSize: 7.5);
+
+        Assert.Equal(LyricsPanelMetrics.MinimumFontSize, metrics.FontSize, precision: 6);
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(-1d)]
+    [InlineData(0d)]
+    public void InvalidMaxFontSizeMeansUnlimited(double maxFontSize)
+    {
+        // NaN 会被 Math.Min 一路传染成 NaN 字号（Math.Max(NaN, 9) 仍是 NaN），
+        // 整块歌词直接消失。必须在入口按「不限」处理掉。
+        var metrics = LyricsPanelMetrics.Create(40, 13, maxFontSize: maxFontSize);
+
+        Assert.Equal(13, metrics.FontSize, precision: 6);
+    }
 }

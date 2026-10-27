@@ -35,12 +35,12 @@ public partial class TaskbarWindow : Window
     private readonly double _scale = 0.9;
 
     /// <summary>
-    /// 歌词小组件的上限（DIP 视觉长度）。
+    /// 歌词小组件的上限（DIP 视觉长度）——**横向专用**，也用作竖向的兜底值。
     ///
-    /// 横向时是宽度上限；竖向时是**主轴长度**上限。
-    /// 实际定义在 <see cref="TaskbarWidgetControl.MaxLyricsWidgetLength"/>——
-    /// 因为 <c>TaskbarWidgetControl.MeasureDesiredWidth</c> 也要用它做上限，
-    /// 两处必须同一个值，所以只在控件里定义一份。
+    /// 横向时是宽度上限；竖向时只是「拿不到任务栏长度时」的退路，正常路径
+    /// 走 <see cref="ResolveMaxLengthDip"/> 按主轴实际长度现算。
+    /// 实际定义在 <see cref="TaskbarWidgetControl.MaxLyricsWidgetLength"/>，
+    /// 与 <c>MeasureDesiredWidth</c> 的默认参数共用一份。
     /// </summary>
     private const double MaxLyricsWidgetWidth = TaskbarWidgetControl.MaxLyricsWidgetLength;
 
@@ -730,7 +730,9 @@ on_error:
     /// <item>非歌词模式：直接返回 <c>null</c>，<c>CalculateSize</c> 走原来的 216 常量，
     /// 行为与改动前逐像素一致。</item>
     /// <item>歌词模式但拿不到占用区间（UIA 失败 / 托盘元素不存在）：返回
-    /// <see cref="MaxLyricsWidgetWidth"/>，比 216 宽但仍是个有界值。</item>
+    /// <see cref="MaxLyricsWidgetWidth"/>（480，与 <c>desiredDip</c> 取小），
+    /// 比 216 宽但仍是个有界值。**竖向的自适应上限不参与这条退路**，
+    /// 理由见下方 <c>fallbackWidth</c> 的注释。</item>
     /// <item>歌词模式且拿到区间：返回实测可用长度，且**不超过**理想宽度。</item>
     /// </list>
     /// <para>
@@ -749,13 +751,16 @@ on_error:
             return null;
         }
 
-        var desiredDip = Math.Min(Widget.MeasureDesiredWidth(), MaxLyricsWidgetWidth);
-
         // 任务栏主轴长度，换算到「相对任务栏左上角的物理像素」，
         // 与 UIA 返回的矩形同一坐标系。
+        //
+        // 必须先求它：竖向的「能占多长」上限是按它现算的，不是常量。
         var taskbarLength = isVertical
             ? taskbarRect.Bottom - taskbarRect.Top
             : taskbarRect.Right - taskbarRect.Left;
+
+        var maxLengthDip = ResolveMaxLengthDip(taskbarLength, dpiScale, isVertical);
+        var desiredDip = Math.Min(Widget.MeasureDesiredWidth(maxLengthDip), maxLengthDip);
 
         if (taskbarLength <= 0 || !double.IsFinite(desiredDip) || desiredDip <= 0)
         {
@@ -767,6 +772,10 @@ on_error:
         // 进避让算法前统一换成物理像素：UIA 与 GetWindowRect 都是物理坐标，
         // 而 desiredDip / MaxLyricsWidgetWidth 是 DIP 视觉宽度。
         // 这个换算是本函数唯一的单位边界，进出各一次。
+        //
+        // fallbackWidth 刻意仍是 480，**不跟着竖向上限变大**：它表示
+        // 「一个空隙都塞不进去 / 占用区未知」时退回的有界常量。那种情况下
+        // 任务栏已经没有空间了，退回一个更大的值只会压到托盘图标上。
         var budget = TaskbarWidthBudget.Resolve(
             desiredWidth: desiredDip * dpiScale,
             fallbackWidth: MaxLyricsWidgetWidth * dpiScale,
@@ -778,8 +787,8 @@ on_error:
         {
             case WidthBudgetOutcome.NoUsableGap:
                 Logger.Debug(
-                    "Lyrics widget has no usable taskbar gap (length={0}, desired={1}px); falling back to constant width.",
-                    taskbarLength, desiredDip * dpiScale);
+                    "Lyrics widget has no usable taskbar gap (length={0}, desired={1}px); falling back to bounded width {2} DIP.",
+                    taskbarLength, desiredDip * dpiScale, MaxLyricsWidgetWidth);
                 break;
 
             case WidthBudgetOutcome.OccupancyUnknown:
@@ -792,6 +801,29 @@ on_error:
         // 换回 DIP 视觉宽度。budget.Width 是物理像素，而 CalculateSize 的预算
         // 是「乘过 _scale 的视觉宽度」，所以只除 dpiScale，不除 _scale。
         return budget.Width / dpiScale;
+    }
+
+    /// <summary>
+    /// 歌词块「能占多长/多宽」的上限（DIP 视觉宽度）。
+    ///
+    /// 横向：固定 <see cref="MaxLyricsWidgetWidth"/>（480）。横向超长的句子
+    /// 会走滚动（见 <c>LyricsPanel</c> 的跑马灯逻辑），不需要把块做大；
+    /// 而 480 正好挡住任务栏中部的应用按钮。
+    ///
+    /// 竖向：**按任务栏实际主轴长度现算**（<see cref="LyricsVerticalLayout.ResolveMaxMainAxisLength"/>）。
+    /// 竖排没有滚动，估算值超过上限的行会被整行裁掉——4K 竖屏主轴两千多 DIP，
+    /// 继续用 480 会把一句长歌词切在半途（截图矩阵 edge-vertical-v28-font20-long-line
+    /// 就是这个现象）。
+    /// </summary>
+    /// <param name="taskbarLength">任务栏主轴长度（物理像素）。</param>
+    private static double ResolveMaxLengthDip(double taskbarLength, double dpiScale, bool isVertical)
+    {
+        if (!isVertical || taskbarLength <= 0 || !double.IsFinite(dpiScale) || dpiScale <= 0)
+        {
+            return MaxLyricsWidgetWidth;
+        }
+
+        return LyricsVerticalLayout.ResolveMaxMainAxisLength(taskbarLength / dpiScale);
     }
 
     /// <summary>

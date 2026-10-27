@@ -44,6 +44,55 @@ public static class LyricsVerticalLayout
     public const double WrapSafetyMargin = 4;
 
     /// <summary>
+    /// 竖排歌词块在 1080p 级任务栏上的长度上限（DIP）——也是主轴长度
+    /// 未知时的兜底值。
+    ///
+    /// 480 是 216（原生小组件占位）的 2.2 倍，100% DPI 下约 32 个汉字，
+    /// 再多就会开始盖住任务栏中部的应用按钮。**它不是普适常量**：
+    /// 4K 竖屏的主轴有两千多 DIP，480 只占四分之一，长句会在半途被截断
+    ///（竖排没有滚动，超出的行直接被 ClipToBounds 吃掉）。所以真实上限
+    /// 由 <see cref="ResolveMaxMainAxisLength"/> 按任务栏实际长度推。
+    /// </summary>
+    public const double DefaultMaxMainAxisLength = 480;
+
+    /// <summary>
+    /// 竖排歌词块长度上限的天花板（DIP）。
+    ///
+    /// 即便在超长屏上也不让歌词块无限膨胀：留 960 是因为再长的歌词块
+    /// 也不该独占半条任务栏，而且超过这个量级说明这句歌词长到「读不完」，
+    /// 该由字形缩放而不是块尺寸来兜。
+    /// </summary>
+    public const double MaxMainAxisLengthCeiling = 960;
+
+    /// <summary>
+    /// 长度上限占任务栏主轴的比例。
+    ///
+    /// 取一半的几何含义：任务栏的应用按钮集中在**正中**，从任意一端最多
+    /// 占到中点，就不会盖住它们。这条不变量也解释了为什么不能按
+    /// 「任务栏越长给越多」线性放大——越过中点就等于把按钮区吃掉了。
+    /// </summary>
+    public const double MaxMainAxisLengthFraction = 0.5;
+
+    /// <summary>
+    /// 按任务栏主轴实际长度推出「歌词块最多占多长」（DIP）。
+    ///
+    /// 单位是 DIP：调用方若手里是物理像素，先除 DPI 再传。
+    /// 传非法值或 0 时退回 <see cref="DefaultMaxMainAxisLength"/>——
+    /// 拿不到任务栏尺寸（UIA 失败、首帧）时行为与改动前一致。
+    /// </summary>
+    public static double ResolveMaxMainAxisLength(double taskbarMainAxisLength)
+    {
+        if (!double.IsFinite(taskbarMainAxisLength) || taskbarMainAxisLength <= 0)
+        {
+            return DefaultMaxMainAxisLength;
+        }
+
+        var half = taskbarMainAxisLength * MaxMainAxisLengthFraction;
+
+        return Math.Clamp(half, DefaultMaxMainAxisLength, MaxMainAxisLengthCeiling);
+    }
+
+    /// <summary>
     /// 估算沿主轴需要的长度（DIP）——<b>只算一行</b>的简化入口。
     /// </summary>
     /// <remarks>
