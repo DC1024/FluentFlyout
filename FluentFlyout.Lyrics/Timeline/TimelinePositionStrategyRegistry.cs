@@ -45,12 +45,26 @@ public sealed class TimelinePositionStrategyRegistry
     }
 
     /// <summary>
-    /// 用默认策略集合构建：Apple Music 优先，其次四家共用策略，兜底朴素外推。
+    /// 用默认策略集合构建。
+    ///
+    /// 顺序有意讲究，<b>不能随意调换</b>：注册表按顺序取第一个
+    /// <c>CanApply</c> 命中的策略。
+    /// <list type="number">
+    /// <item><see cref="LocalClockTimelinePositionStrategy"/> 排最前——
+    /// 「时间轴根本不可用」比「这是哪家播放器」更根本。若放到
+    /// <see cref="CommonExtrapolatedTimelinePositionStrategy"/> 之后，
+    /// 网易云会先命中后者（它按 AUMID 认 netease/cloudmusic），
+    /// 于是永远用不上本地时钟，位置恒 0。</item>
+    /// <item>其次 Apple Music，它有专门的量化/漂移处理。</item>
+    /// <item>再次四家共用策略。</item>
+    /// <item>最后是兜底朴素外推。</item>
+    /// </list>
     /// </summary>
     public static TimelinePositionStrategyRegistry CreateDefault(TimeProvider? timeProvider = null)
     {
         return new TimelinePositionStrategyRegistry(
             [
+                new LocalClockTimelinePositionStrategy(timeProvider),
                 new AppleMusicTimelinePositionStrategy(timeProvider),
                 new CommonExtrapolatedTimelinePositionStrategy()
             ],
@@ -132,6 +146,23 @@ public sealed class TimelinePositionStrategyRegistry
         in TimelineSample sample,
         TimeSpan selectedPosition)
     {
+        // 时间轴不可用时整层「保位」必须跳过，否则会把本地时钟外推钉死。
+        //
+        // 失败链条：这段逻辑靠「时间戳有没有前进」判断时间轴刷没刷新
+        // （`LastUpdatedTimeUtc <= _lastTimelineUpdatedAtUtc`）。网易云的时间戳
+        // 恒为 1601-01-01，于是每次采样都被判为「没刷新」：
+        //   - 首帧 _hasTimelineState 为 false，记下时间戳后返回，看似正常；
+        //   - 但一旦经历一次暂停再恢复，_waitingForResumedTimeline 会被置 true，
+        //     而时间戳永远 <= 上次值，判定条件恒成立 → 永远返回
+        //     _lastSelectedPosition，位置彻底不动。
+        // 结果就是 LocalClockTimelinePositionStrategy 算得再对也没用。
+        if (TimelineValidity.IsTimestampUnusable(sample.LastUpdatedTimeUtc))
+        {
+            _lastTimelineUpdatedAtUtc = sample.LastUpdatedTimeUtc;
+            _lastSelectedPosition = selectedPosition;
+            return selectedPosition;
+        }
+
         // 上游这里用 ResolvedSource，我们只有 AUMID；配合 Title/Artist 已足以识别换歌。
         var trackIdentity = string.Join('|', sample.SourceAppUserModelId, sample.Title, sample.Artist);
 
