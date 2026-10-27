@@ -3,6 +3,8 @@
 
 using FluentFlyout.Classes.Settings;
 using FluentFlyout.Classes.Utils;
+using FluentFlyout.Lyrics.Layout;
+using FluentFlyout.Lyrics.Models;
 using FluentFlyoutWPF;
 using System.Windows;
 using System.Windows.Controls;
@@ -65,6 +67,12 @@ public partial class TaskbarWidgetControl : UserControl
     private bool _isVertical;
     private bool _isSmallTaskbar;
 
+    /// <summary>
+    /// 歌词模式是否开启。开启后 LyricsPanel 取代 SongInfoStackPanel，
+    /// 且 UpdateMarquees 不再驱动标题滚动动画。
+    /// </summary>
+    private bool _isLyricsMode;
+
     public TaskbarWidgetControl()
     {
         InitializeComponent();
@@ -117,10 +125,12 @@ public partial class TaskbarWidgetControl : UserControl
     public void SetVerticalMode(bool isVertical)
     {
         _isVertical = isVertical;
-        SongInfoStackPanel.Visibility = isVertical ? Visibility.Collapsed : Visibility.Visible;
-        SongArtistContainer.Visibility = !_isSmallTaskbar && !isVertical && !string.IsNullOrEmpty(_actualArtist)
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+
+        // 歌词面板的竖向排版与标题区不同：标题区在竖向任务栏上是直接隐藏，
+        // 歌词必须显示。这里只切面板自身的 Orientation，具体排版由它负责。
+        LyricsPanel.SetVerticalMode(isVertical);
+
+        UpdateTextRegionVisibility();
 
         var counterRotate = isVertical ? new RotateTransform(-90) : null;
 
@@ -137,9 +147,7 @@ public partial class TaskbarWidgetControl : UserControl
     public void SetSmallTaskbarMode(bool isSmallTaskbar)
     {
         _isSmallTaskbar = isSmallTaskbar;
-        SongArtistContainer.Visibility = !isSmallTaskbar && !_isVertical && !string.IsNullOrEmpty(_actualArtist)
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        UpdateTextRegionVisibility();
 
         double coverImageSize = isSmallTaskbar ? SmallCoverImageSize : DefaultCoverImageSize;
         SongImageBorder.Width = coverImageSize;
@@ -152,6 +160,124 @@ public partial class TaskbarWidgetControl : UserControl
             button.Width = controlButtonSize;
             button.Height = controlButtonSize;
         }
+    }
+
+    /// <summary>
+    /// 统一决定「标题区还是歌词区」显示哪个。
+    ///
+    /// 改动前这段逻辑分散在 SetVerticalMode / SetSmallTaskbarMode / UpdateUi
+    /// 三处，各自直接写 Visibility，加进歌词后必然互相覆盖。集中到一处，
+    /// 三处都改成调用它。
+    /// </summary>
+    private void UpdateTextRegionVisibility()
+    {
+        if (_isLyricsMode)
+        {
+            LyricsPanel.SetActive(true);
+            SongInfoStackPanel.Visibility = Visibility.Collapsed;
+            SongArtistContainer.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        LyricsPanel.SetActive(false);
+        SongInfoStackPanel.Visibility = _isVertical ? Visibility.Collapsed : Visibility.Visible;
+        SongArtistContainer.Visibility = !_isSmallTaskbar && !_isVertical && !string.IsNullOrEmpty(_actualArtist)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 切换歌词模式。
+    /// </summary>
+    /// <param name="enabled">是否启用歌词。</param>
+    /// <param name="metrics">
+    /// 歌词面板度量。传 null 表示沿用当前度量（若从未设置过则用默认值推导）。
+    /// </param>
+    public void SetLyricsMode(bool enabled, LyricsPanelMetrics? metrics = null)
+    {
+        if (_isLyricsMode == enabled && (metrics is null || !enabled))
+        {
+            return;
+        }
+
+        _isLyricsMode = enabled;
+
+        if (enabled)
+        {
+            LyricsPanel.ApplyMetrics(metrics ?? BuildLyricsMetrics());
+        }
+
+        UpdateTextRegionVisibility();
+
+        // 进歌词模式时停掉标题滚动动画。隐藏的 TextBlock 上跑着
+        // RepeatBehavior.Forever 的动画仍然消耗渲染时钟，
+        // 而且切回来时动画状态是脏的。
+        if (enabled)
+        {
+            StopMarqueeAnimations();
+        }
+        else
+        {
+            UpdateMarquees();
+        }
+    }
+
+    /// <summary>按当前任务栏尺寸推导歌词度量。</summary>
+    private LyricsPanelMetrics BuildLyricsMetrics()
+    {
+        double height = _isSmallTaskbar ? SmallTaskbarWidgetHeight : DefaultTaskbarWidgetHeight;
+
+        // 竖向任务栏：旋转后视觉高度 = 内部宽度，可用空间反而更大。
+        // 这里先按横向算，竖向的精确排版留给 P3-12 处理。
+        return LyricsPanelMetrics.Create(
+            availableHeight: height,
+            preferredFontSize: 13,
+            forceSingleLine: _isSmallTaskbar);
+    }
+
+    /// <summary>
+    /// 更新一帧歌词。这是热路径（最多 30 次/秒），
+    /// 只改文本与扫描遮罩，<b>不触发重排</b>。
+    /// </summary>
+    /// <returns>
+    /// 内容需要的宽度（DIP）。宿主据此决定是否请求一次任务栏重排——
+    /// 面板自己不做这个决定，因为它不知道任务栏可用区间。
+    /// </returns>
+    public double UpdateLyricsFrame(LyricDisplayFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+
+        if (!_isLyricsMode)
+        {
+            return 0;
+        }
+
+        LyricsPanel.ApplyFrame(frame);
+        return LyricsPanel.MeasureDesiredWidth();
+    }
+
+    /// <summary>
+    /// 停掉两条标题滚动动画。歌词模式下调用，避免后台空转。
+    /// </summary>
+    private void StopMarqueeAnimations()
+    {
+        if (SongTitle.RenderTransform is TranslateTransform titleTransform)
+        {
+            titleTransform.BeginAnimation(TranslateTransform.XProperty, null);
+            titleTransform.X = 0;
+        }
+
+        if (SongArtist.RenderTransform is TranslateTransform artistTransform)
+        {
+            artistTransform.BeginAnimation(TranslateTransform.XProperty, null);
+            artistTransform.X = 0;
+        }
+
+        // 渐变遮罩上的颜色动画也要停，否则 OpacityMask 仍挂着动画时钟。
+        _cachedTitleOpacityMask?.GradientStops[0].BeginAnimation(GradientStop.ColorProperty, null);
+        _cachedTitleOpacityMask?.GradientStops[3].BeginAnimation(GradientStop.ColorProperty, null);
+        _cachedArtistOpacityMask?.GradientStops[0].BeginAnimation(GradientStop.ColorProperty, null);
+        _cachedArtistOpacityMask?.GradientStops[3].BeginAnimation(GradientStop.ColorProperty, null);
     }
 
     public void SetMainWindow(MainWindow mainWindow)
@@ -173,6 +299,11 @@ public partial class TaskbarWidgetControl : UserControl
         PreviousButton.Foreground = foreground;
         PlayPauseButton.Foreground = foreground;
         NextButton.Foreground = foreground;
+
+        // 歌词面板的配色必须跟系统主题走，不能用 App 主题——
+        // 任务栏是系统区域，用户把 App 设成浅色但系统深色时，
+        // 用 App 配色会出现浅底白字。
+        LyricsPanel.ApplyWindowsTheme(isDark);
     }
 
     private void Grid_MouseEnter(object sender, MouseEventArgs e)
@@ -351,6 +482,13 @@ public partial class TaskbarWidgetControl : UserControl
 
     public void UpdateMarquees()
     {
+        // 歌词模式下标题区是隐藏的，别再驱动它的滚动动画：
+        // 隐藏元素上的 Forever 动画仍占渲染时钟，切回来时状态也是脏的。
+        if (_isLyricsMode)
+        {
+            return;
+        }
+
         double titleAvailableWidth = double.IsNaN(SongTitleContainer.Width) ? 0 : SongTitleContainer.Width;
         double artistAvailableWidth = double.IsNaN(SongArtistContainer.Width) ? 0 : SongArtistContainer.Width;
 
@@ -634,10 +772,11 @@ public partial class TaskbarWidgetControl : UserControl
             }
 
             SongTitle.Visibility = Visibility.Visible;
-            SongArtistContainer.Visibility = !_isSmallTaskbar && !_isVertical && !string.IsNullOrEmpty(_actualArtist)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-            SongInfoStackPanel.Visibility = _isVertical ? Visibility.Collapsed : Visibility.Visible;
+
+            // 标题区 / 歌词区的可见性统一由 UpdateTextRegionVisibility 决定，
+            // 这里不再直接写 SongArtistContainer / SongInfoStackPanel。
+            UpdateTextRegionVisibility();
+
             BackgroundImage.Visibility = SettingsManager.Current.TaskbarWidgetBackgroundBlur ? Visibility.Visible : Visibility.Collapsed;
 
             // on top of XAML visibility binding (XAML binding only hides when disabled in settings)

@@ -5,6 +5,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
              xmlns:viewModels="clr-namespace:FluentFlyoutWPF.ViewModels"
+             xmlns:controls="clr-namespace:FluentFlyout.Controls"
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance viewModels:UserSettings}"
              Height="40" Width="100"
@@ -38,6 +39,13 @@
                                 <ImageBrush x:Name="SongImage" Stretch="UniformToFill" />
                             </Border.Background>
                         </Border>
+
+                        <!--
+                            歌词面板与 SongInfoStackPanel 同级、互斥显示：
+                            歌词开 → 只留 LyricsPanel；歌词关 → 走原有标题/艺术家。
+                            两者都靠 TaskbarWidgetControl.UpdateTextRegionVisibility() 控制。
+                        -->
+                        <controls:LyricsPanel x:Name="LyricsPanel" Margin="8,0,0,0" />
 
                         <StackPanel Name="SongInfoStackPanel" Orientation="Vertical" VerticalAlignment="Center" Width="Auto" Margin="8,0,0,0"
                                     ToolTipService.InitialShowDelay="800"
