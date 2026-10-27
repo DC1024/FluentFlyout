@@ -174,8 +174,19 @@ public partial class LyricsPanel : UserControl
         PrimaryScanText.FontSize = metrics.FontSize;
         SecondaryText.FontSize = metrics.TranslationFontSize;
 
-        PrimaryContainer.Height = metrics.LineHeight;
-        SecondaryContainer.Height = metrics.LineHeight;
+        if (_isVertical)
+        {
+            // 竖向时高度不能钉死：换行后行数由「主轴长度 ÷ 视口宽度」决定，
+            // 不是度量能预知的。写死 LineHeight 会把换行后的内容裁成一行，
+            // 与 SetVerticalMode 里清空高度约束的做法保持一致。
+            PrimaryContainer.Height = double.NaN;
+            SecondaryContainer.Height = double.NaN;
+        }
+        else
+        {
+            PrimaryContainer.Height = metrics.LineHeight;
+            SecondaryContainer.Height = metrics.LineHeight;
+        }
 
         if (metrics.IsSingleLine)
         {
@@ -194,6 +205,13 @@ public partial class LyricsPanel : UserControl
         // 字号变了文本宽度也会变，缓存必须失效。
         _cachedMeasuredFontSize = -1;
         UpdatePrimaryTextWidth();
+
+        // 竖向时字号变化会改变换行位置，视口宽度没变但折行点变了，
+        // 重新钉一次宽度让 TextBlock 立刻重排（SizeChanged 不会触发）。
+        if (_isVertical)
+        {
+            UpdateVerticalWrapWidth();
+        }
     }
 
     /// <summary>
@@ -305,6 +323,10 @@ public partial class LyricsPanel : UserControl
 
         // 竖向模式下文本是换行的，横向偏移毫无意义——会把换行后的
         // 整块内容推出视口。这里直接归零并返回。
+        //
+        // 注意：这里说的「竖向」是**面板自身被反向旋转抵消之后**的状态。
+        // 抵消之后坐标系回到屏幕坐标，PrimaryContainer 的宽度对应屏幕上的
+        // 纵向延伸；换行已经让内容完整可见，再横向滚动只会把行推出去。
         if (_isVertical)
         {
             if (Math.Abs(transform.X) > 1e-6)
@@ -652,7 +674,16 @@ public partial class LyricsPanel : UserControl
                 fontSize,
                 Brushes.Black,
                 null,
-                1);
+                // pixelsPerDip 只影响**字形栅格化的取整**，不改变返回值单位
+                // （Width 始终是 DIP）。传 1 与传真实 DPI 的差异在 0.1 DIP 量级，
+                // 远小于 WidthChangeThreshold = 4，所以这里不值得每帧去查 DPI。
+                //
+                // 但要写清楚为什么不用 1 以外的值：面板会被挂到不同 DPI 的
+                // 任务栏窗口上（混合 DPI 多屏），若把 DPI 混进度量，同一句歌词
+                // 在两块屏上会算出不同宽度，进而让 DesiredWidthChanged 反复触发，
+                // 表现为「拖动窗口到另一块屏后任务栏小组件宽度来回跳」。
+                // 度量必须与 DPI 无关，物理像素由 WPF 统一换算。
+                pixelsPerDip: 1);
 
             return formatted.Width;
         }
@@ -728,31 +759,37 @@ public partial class LyricsPanel : UserControl
     }
 
     /// <summary>
-    /// 切换竖向任务栏排版。
+    /// 切换竖向任务栏排版：<b>反向旋转抵消宿主旋转 + 沿主轴换行</b>。
     ///
-    /// **不旋转，只换主轴。** 竖向任务栏的宽度通常只有 48–60 DIP，
-    /// 横排一行放不下一个句子，所以让文本沿主轴方向换行。
+    /// 竖向任务栏的宽度通常只有 40–60 DIP，横排一行放不下一个句子，
+    /// 所以文本要沿主轴方向换行。但换行本身不足以让字形正立——
+    /// 这一点是**第二轮探针实测出来的，推翻了第一轮的结论**。
     ///
-    /// 这个结论来自离屏渲染探针（<c>FluentFlyout.Lyrics.Probe.Render</c>），
-    /// 它推翻了「给面板加 LayoutTransform(-90) 让字形正立」的直觉方案：
+    /// <c>TaskbarWindow.PositionWidget</c> 对竖向任务栏会**无条件**给整个
+    /// <c>TaskbarWidgetControl</c> 挂 <c>LayoutTransform = RotateTransform(90)</c>。
+    /// 第一轮探针只测了「Widget 不旋转 + 歌词换行」（G/H 方案，墨迹 541px），
+    /// 据此得出「竖向不需要任何旋转」——但那个前提在真机上不存在。
+    /// 补测真实场景后：
     ///
-    /// <list type="bullet">
-    /// <item><b>panel LayoutTransform(-90)，尺寸硬编码</b>：内容完全消失
-    /// （墨迹 0px）。父级按未旋转尺寸排版，panel 被排到 x = −135，
-    /// 整块跑到画布外。</item>
-    /// <item><b>panel RenderTransform(-90)</b>：墨迹只剩 64px，大部分被裁。
-    /// 同上，只是裁得少一点。</item>
-    /// <item><b>panel LayoutTransform(-90)，尺寸 Auto</b>：字形正立
-    /// （宽高比 1.54），但只显示 3–4 个字——物理限制。</item>
-    /// <item><b>不旋转 + 换行</b>：完整显示（墨迹 541px，是单行的 2 倍），
-    /// 正立可读。与 TaskbarLyrics 的做法一致：全仓库没有任何
-    /// <c>RotateTransform</c>，竖向时只是把窗口宽度收窄到任务栏宽度、
-    /// 沿主轴拉长。</item>
+    /// <list type="table">
+    /// <listheader><term>方案</term><description>实测结果</description></listheader>
+    /// <item><term>I：Widget(+90) + panel 不旋转</term>
+    /// <description>墨迹仅 182px（完整显示的 34%），文字整体躺倒。
+    /// 单字符 <c>—</c> 的包围盒 1×20（宽高比 0.05）证实是竖线。</description></item>
+    /// <item><term>J：Widget(+90) + panel LayoutTransform(−90)</term>
+    /// <description>墨迹 553px（与完整显示的 541px 相当），文字正立。
+    /// 单字符包围盒 20×1（宽高比 20.0）证实是横线。</description></item>
     /// </list>
     ///
-    /// 好处不只是正确：不需要嵌套变换、不需要 LayoutTransform 的额外
-    /// measure 遍、不需要为竖向单独调扫描渐变方向（StartPoint/EndPoint
-    /// 本来就沿 PrimaryContainer 的宽度方向，横排时天然正确）。
+    /// 所以正确做法是「<b>抵消</b>宿主旋转 + 换行」，而不是「不旋转」。
+    /// 与第一轮 C 方案（panel 挂 −90 但尺寸硬编码 185）的区别在尺寸：
+    /// C 之所以墨迹 0px，是因为 panel 硬编码宽度 185 超出父级可用空间后
+    /// 被排到 x = −135 画布外。这里 panel 宽度由 Grid 布局给出（不硬编码），
+    /// 旋转后父级拿到的是真实尺寸，不会溢出。
+    ///
+    /// 顺带一个好处：抵消之后坐标系回到「屏幕坐标」，扫描渐变
+    /// （沿 PrimaryContainer 宽度方向）与长句滚动都天然正确，
+    /// 不需要为竖向单独调方向。
     /// </summary>
     public void SetVerticalMode(bool isVertical)
     {
@@ -768,7 +805,7 @@ public partial class LyricsPanel : UserControl
 
         if (_isVertical == isVertical)
         {
-            // 方向没变，别重复设 TextWrapping——那会触发一次 measure 遍，
+            // 方向没变，别重复设变换与 TextWrapping——两者都会触发 measure 遍，
             // 而这个方法被 UpdatePosition 每 1.5s 调一次。
             UpdateEffectiveVisibility();
             return;
@@ -776,8 +813,17 @@ public partial class LyricsPanel : UserControl
 
         _isVertical = isVertical;
 
-        // 竖向与横向的唯一差别是换行策略。XAML 里默认 NoWrap（横向行为），
-        // 只在竖向时打开，避免横向时多余的换行测量。
+        // 抵消宿主的 RotateTransform(90)。
+        //
+        // 用 LayoutTransform 而不是 RenderTransform：后者只改绘制、不改布局，
+        // 父级仍按未旋转的尺寸排版，结果就是第一轮 D 方案那样被裁（墨迹 64px）。
+        //
+        // 横向时用 Transform.Identity 而不是 null，避免 RenderTransform 在
+        // null 与非 null 之间切换也触发一次合成失效。
+        LayoutTransform = isVertical ? new RotateTransform(-90) : Transform.Identity;
+
+        // 换行策略：竖向时打开。抵消旋转后，这里的「宽度」对应屏幕上的
+        // **纵向**延伸，所以 Wrap 折的是「任务栏宽度」这条边。
         var wrapping = isVertical ? TextWrapping.Wrap : TextWrapping.NoWrap;
 
         PrimaryText.TextWrapping = wrapping;

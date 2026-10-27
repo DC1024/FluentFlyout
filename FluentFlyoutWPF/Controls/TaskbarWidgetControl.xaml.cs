@@ -42,6 +42,19 @@ public partial class TaskbarWidgetControl : UserControl
     private readonly double _scale = 0.9;
     private readonly int _nativeWidgetsPadding = 216;
 
+    /// <summary>
+    /// 歌词模式下这块占位「最多能占多大」的上限（DIP 视觉长度）。
+    ///
+    /// 横向时是宽度上限；竖向时是**主轴长度**上限。同一常量两种含义，
+    /// 因为两者都是「沿可协商方向能占多少」——横向能协商宽度，
+    /// 竖向能协商的只有长度（宽度被任务栏本身钉死）。
+    ///
+    /// 取 480 的理由：一句歌词按 13px 字号要 300–450 DIP 才不截断。
+    /// 480 是 216 的 2.2 倍，在 100% DPI 下刚好容纳约 32 个汉字
+    /// 或 60 个西文字符，再大就会开始盖住任务栏中部的应用按钮。
+    /// </summary>
+    public const double MaxLyricsWidgetLength = 480;
+
     // Cached width calculations
     private string _cachedTitleText = string.Empty;
     private string _cachedArtistText = string.Empty;
@@ -122,30 +135,73 @@ public partial class TaskbarWidgetControl : UserControl
         }
     }
 
+    /// <summary>
+    /// 切换竖向任务栏模式。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>TaskbarWindow.PositionWidget</c> 每次 <c>UpdatePosition</c> 都会调到这里
+    /// （1.5s 定时器 + 每次换歌 + 每次歌词换行）。方法体本身是幂等的，
+    /// 但有两件事不能无条件做：
+    /// </para>
+    /// <list type="bullet">
+    /// <item><b>重算歌词度量</b>——<see cref="LyricsPanel.ApplyMetrics"/>
+    /// 会改字号与行高，等于定时触发一次重排。</item>
+    /// <item><b>新建变换对象</b>——每次 new 一个 <see cref="RotateTransform"/>
+    /// 赋给 <c>RenderTransform</c>，会让 WPF 丢弃旧的渲染缓存重新合成；
+    /// 4 个元素 × 每 1.5s 一次，在低端机上是可以量到的抖动。</item>
+    /// </list>
+    /// <para>两者都用 <c>changed</c> 把关。</para>
+    /// </remarks>
     public void SetVerticalMode(bool isVertical)
     {
+        var changed = _isVertical != isVertical;
         _isVertical = isVertical;
 
         // 歌词面板的竖向排版与标题区不同：标题区在竖向任务栏上是直接隐藏，
         // 歌词必须显示。这里只切面板自身的 Orientation，具体排版由它负责。
+        // 它自己也有方向未变时的早退，重复调用无代价。
         LyricsPanel.SetVerticalMode(isVertical);
 
         UpdateTextRegionVisibility();
 
-        var counterRotate = isVertical ? new RotateTransform(-90) : null;
-
-        SongImageBorder.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
-        SongImageBorder.RenderTransform = (Transform?)counterRotate ?? Transform.Identity;
-
-        foreach (var button in new Wpf.Ui.Controls.Button[] { PreviousButton, PlayPauseButton, NextButton })
+        if (changed)
         {
-            button.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
-            button.RenderTransform = (Transform?)counterRotate ?? Transform.Identity;
+            // 变换只在方向真的翻转时重建。横向时赋 Transform.Identity 而不是
+            // null，避免 RenderTransform 在 null 与非 null 之间来回切也触发合成失效。
+            //
+            // 每个元素单独 new 一份而不是共用同一个实例：共用在 WPF 里是合法的
+            // （Freezable 支持多父级），但一旦将来有人想给某个按钮单独加角度，
+            // 共用会静默地把另外三个一起改掉。这里方向切换最多每秒一次，
+            // 四份对象的代价可以忽略。
+            void ApplyCounterRotation(FrameworkElement element)
+            {
+                element.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
+                element.RenderTransform = isVertical ? new RotateTransform(-90) : Transform.Identity;
+            }
+
+            ApplyCounterRotation(SongImageBorder);
+
+            foreach (var button in new Wpf.Ui.Controls.Button[] { PreviousButton, PlayPauseButton, NextButton })
+            {
+                ApplyCounterRotation(button);
+            }
+
+            RefreshLyricsMetrics();
         }
     }
 
+    /// <summary>
+    /// 切换小任务栏模式（任务栏短边 &lt; 40 DIP）。
+    /// </summary>
+    /// <remarks>
+    /// 小任务栏会把歌词压成单行（28px 装不下两行），所以这里也参与度量推导，
+    /// 同样要 <c>changed</c> 把关。判定用的是 DIP 高度，与 DPI 无关——
+    /// 150% 下物理 60px 的任务栏仍是 40 DIP，不会被误判成小任务栏。
+    /// </remarks>
     public void SetSmallTaskbarMode(bool isSmallTaskbar)
     {
+        var changed = _isSmallTaskbar != isSmallTaskbar;
         _isSmallTaskbar = isSmallTaskbar;
         UpdateTextRegionVisibility();
 
@@ -160,6 +216,35 @@ public partial class TaskbarWidgetControl : UserControl
             button.Width = controlButtonSize;
             button.Height = controlButtonSize;
         }
+
+        if (changed)
+        {
+            RefreshLyricsMetrics();
+        }
+    }
+
+    /// <summary>
+    /// 按当前的「方向 + 是否小任务栏」重新推导歌词度量。
+    ///
+    /// 只在影响度量的输入真的变化时调用（<see cref="SetVerticalMode"/>、
+    /// <see cref="SetSmallTaskbarMode"/>、<see cref="SetLyricsMode"/>）。
+    /// <b>不要放进帧循环，也不要每次 UpdatePosition 都走一遍</b>——
+    /// <see cref="LyricsPanel.ApplyMetrics"/> 会改字号与行高，触发整块重排。
+    ///
+    /// 为什么需要它：<see cref="BuildLyricsMetrics"/> 同时依赖
+    /// <c>_isVertical</c> 与 <c>_isSmallTaskbar</c>。改动前它只在
+    /// <see cref="SetLyricsMode"/> 里被调用一次，于是用户把任务栏从横向
+    /// 改成竖向（或换成小任务栏）后，歌词面板还挂着旧的字号与行高：
+    /// 竖向时本该「不强制单行、靠换行吃满主轴长度」，却仍按横向的度量排版。
+    /// </remarks>
+    public void RefreshLyricsMetrics()
+    {
+        if (!_isLyricsMode)
+        {
+            return;
+        }
+
+        LyricsPanel.ApplyMetrics(BuildLyricsMetrics());
     }
 
     /// <summary>
@@ -260,6 +345,9 @@ public partial class TaskbarWidgetControl : UserControl
     /// <c>logicalWidth * dpiScale * _scale</c>——也就是说 216 这个常量
     /// 从来就是「DIP 视觉宽度」，在 150% DPI 下它仍占 216 DIP。
     /// 若这里返回物理像素，非 100% DPI 时预算会凭空多出 dpiScale 倍。
+    ///
+    /// <b>竖向时返回值语义不同</b>：不是宽度而是**主轴长度**（屏幕纵向）。
+    /// 竖向任务栏宽度固定（通常 40–60 DIP），能协商的只有沿主轴占多长。
     /// </summary>
     public double MeasureDesiredWidth()
     {
@@ -268,16 +356,23 @@ public partial class TaskbarWidgetControl : UserControl
             return 0;
         }
 
-        // 竖向任务栏上不旋转排版（见 LyricsPanel.SetVerticalMode 的实测说明），
-        // 文本沿主轴换行，所以「想要多宽」实际是「想要多长」：
-        // 竖向时这个方法的返回值会被 TaskbarWindow 当成主轴长度用。
-        //
-        // 竖向的视觉宽度由任务栏宽度决定（不可协商），所以这里报的是
-        // 主轴方向的理想长度——按「一行大概放得下 4 个汉字」估，
-        // 取一个能让两行歌词完整显示的量。
         if (_isVertical)
         {
-            return (LyricsPanel.Metrics.LineHeight * 4) * _scale;
+            // 竖向：一句歌词必然折成多行，需要的主轴长度 = 行数 × 行高。
+            // 估算逻辑在 Core 的 LyricsVerticalLayout 里（可单测）。
+            //
+            // 上限给 MaxLyricsWidgetLength：横向时它是 480 DIP 宽度，
+            // 竖向时同值作为「最多占主轴 480 DIP」——对 1080p 屏
+            //（主轴约 1040 DIP）不到一半，不会盖住任务栏中部的应用按钮。
+            var crossSize = _isSmallTaskbar
+                ? LyricsMetricsPolicy.SmallTaskbarCrossSize
+                : LyricsMetricsPolicy.DefaultTaskbarCrossSize;
+
+            return LyricsVerticalLayout.EstimateMainAxisLength(
+                contentWidth: LyricsPanel.DesiredContentWidth,
+                crossSize: crossSize,
+                lineHeight: LyricsPanel.Metrics.LineHeight,
+                maxLength: MaxLyricsWidgetLength);
         }
 
         var coverImageMargin = _isSmallTaskbar ? SmallCoverImageMargin : DefaultCoverImageMargin;
@@ -319,20 +414,17 @@ public partial class TaskbarWidgetControl : UserControl
         return controlsWidth;
     }
 
-    /// <summary>按当前任务栏尺寸推导歌词度量。</summary>
+    /// <summary>
+    /// 按当前任务栏形态推导歌词度量。
+    ///
+    /// 决策本身在 Core 的 <see cref="LyricsMetricsPolicy"/> 里（可用 2×2 矩阵单测锁死），
+    /// 这里只负责把 WPF 侧的两个标志位传进去。
+    /// </summary>
     private LyricsPanelMetrics BuildLyricsMetrics()
     {
-        double height = _isSmallTaskbar ? SmallTaskbarWidgetHeight : DefaultTaskbarWidgetHeight;
-
-        // 竖向任务栏不旋转排版（文本沿主轴换行），行高与横向保持一致，
-        // 所以这里不区分方向——换行后的行数由主轴长度决定，不是由度量决定。
-        //
-        // 唯一的方向差异：小任务栏在竖向时不必强制单行。竖向的物理约束是
-        // 「宽度窄」，而宽度窄正好靠换行解决，不需要再压成一行。
-        return LyricsPanelMetrics.Create(
-            availableHeight: height,
-            preferredFontSize: 13,
-            forceSingleLine: _isSmallTaskbar && !_isVertical);
+        return LyricsMetricsPolicy.Create(
+            isVertical: _isVertical,
+            isSmallTaskbar: _isSmallTaskbar);
     }
 
     /// <summary>
@@ -558,21 +650,36 @@ public partial class TaskbarWidgetControl : UserControl
         // 不在本次改动里改。
         double controlsWidth = MeasureControlsWidth();
 
+        // 竖向下不扣按钮宽度：竖向的预算方向是主轴（屏幕纵向），
+        // 而按钮组经反向旋转后是竖排的，占的也是主轴方向——但它的
+        // 高度由 TaskbarWindow 的 crossPos 居中处理，不在这个预算里。
+        // 扣掉会让可用主轴长度凭空少一个按钮组。
+        double budgetDeduction = _isVertical ? 0 : controlsWidth;
+
         double maxLogicalWidth = availableWidth is { } budget
-            ? Math.Max((budget / _scale) - controlsWidth, 0)
+            ? Math.Max((budget / _scale) - budgetDeduction, 0)
             : _nativeWidgetsPadding / _scale;
 
         double logicalWidth;
 
         if (_isVertical && _isLyricsMode)
         {
-            // 竖向任务栏上的歌词：旋转 90° 后，`logicalWidth` 就是**屏幕上的高度**
-            // （沿任务栏主轴的延伸量），`logicalHeight` 是屏幕上的宽度。
+            // 竖向任务栏上的歌词。
             //
-            // 竖向不旋转排版（见 LyricsPanel.SetVerticalMode 的实测说明），
-            // 所以这里要的是「主轴能给多长」而不是「内容多宽」：
-            // 任务栏越短，能换的行越少。maxLogicalWidth 已经是主轴预算
-            // （TaskbarWindow 对竖向传的是任务栏高度方向的区间），直接用。
+            // 坐标系有两层，容易绕进去，写清楚：
+            //   1. TaskbarWindow.PositionWidget 给整个控件挂 LayoutTransform(+90)，
+            //      所以控件的「逻辑宽度」在屏幕上表现为**纵向延伸**（主轴长度），
+            //      「逻辑高度」表现为**横向宽度**（任务栏宽度）。
+            //   2. LyricsPanel 内部再挂一个 LayoutTransform(-90) 把旋转抵消掉，
+            //      让字形正立（见 LyricsPanel.SetVerticalMode 的探针数据）。
+            //
+            // 所以这里的 logicalWidth 要的是「沿主轴占多长」，而
+            // maxLogicalWidth 正是 TaskbarWindow 传下来的主轴预算
+            // （竖向时它算的是任务栏高度方向的可用区间），直接用。
+            //
+            // 不扣 controlsWidth：播放按钮组在竖向时被反向旋转成竖排，
+            // 占的是主轴方向的一小段，已经由 MeasureDesiredWidth 的
+            // 折行估算隐含包含在内容里；再扣一次会让可用长度凭空少一截。
             logicalWidth = maxLogicalWidth;
         }
         else if (_isVertical)
@@ -616,7 +723,14 @@ public partial class TaskbarWidgetControl : UserControl
 
         // 歌词模式下容器宽度同时决定歌词视口宽度，必须一起更新，
         // 否则长句滚动会按旧的视口宽度算，滚出边界。
-        if (_isLyricsMode && widthChanged)
+        //
+        // 竖向时不设：竖向下 LyricsPanel 的宽度由「任务栏宽度」决定，
+        // 与这里的 logicalWidth（主轴长度）不是同一个量。竖向下
+        // logicalWidth 对应屏幕纵向延伸，写进 LyricsPanel.Width 会让面板
+        // 变成一条极长的横条，换行完全失效。竖向的视口宽度由
+        // LyricsPanel.UpdateVerticalWrapWidth 自己从 PrimaryContainer
+        // 的实际宽度取。
+        if (_isLyricsMode && !_isVertical && widthChanged)
         {
             LyricsPanel.Width = newTitleContainerWidth;
         }
@@ -627,12 +741,23 @@ public partial class TaskbarWidgetControl : UserControl
             UpdateMarquees();
         }
 
-        // add space for playback controls if enabled and visible
-        if (controlsWidth > 0)
+        // 播放按钮组占的空间。竖向下**不加**：竖向的 logicalWidth 是主轴长度
+        // （屏幕纵向），按钮组经反向旋转后是竖排的，占的是同一个方向，
+        // 但它的高度已经由 TaskbarWindow 的 crossPos 居中处理，
+        // 在这里加会让整块占位沿主轴多出一截空白。
+        if (controlsWidth > 0 && !_isVertical)
         {
             logicalWidth += controlsWidth;
         }
 
+        // 竖向时 logicalHeight 是屏幕上的**横向宽度**，也就是任务栏宽度——
+        // TaskbarWindow 会把它写成 Widget.Height（physicalHeight / dpiScale）。
+        //
+        // 这里仍然返回 40 / 28（任务栏短边的标准值）：TaskbarWindow 的
+        // crossPos 计算是 `(crossSize - physicalHeight) / 2`，若两边取同一来源
+        // （都来自 SettingsManager 的短边判定），居中的结果才稳定。
+        // 真正的可用宽度由 LyricsPanel.UpdateVerticalWrapWidth 从
+        // PrimaryContainer.ActualWidth 取，不依赖这个返回值。
         double logicalHeight = _isSmallTaskbar ? SmallTaskbarWidgetHeight : DefaultTaskbarWidgetHeight;
 
         return (logicalWidth, logicalHeight);

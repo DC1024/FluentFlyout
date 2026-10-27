@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 using FluentFlyout.Classes.Settings;
+using FluentFlyout.Controls;
 using FluentFlyout.Lyrics.Layout;
 using FluentFlyoutWPF;
 using FluentFlyoutWPF.Classes;
@@ -34,14 +35,14 @@ public partial class TaskbarWindow : Window
     private readonly double _scale = 0.9;
 
     /// <summary>
-    /// 歌词模式下整块占位的宽度上限（占屏像素）。
+    /// 歌词小组件的上限（DIP 视觉长度）。
     ///
-    /// 216 是「与 Windows 原生小组件等宽」的产品决定，对标题够用；
-    /// 一句歌词按 13px 字号要 300–450px 才不截断。480 是 216 的 2.2 倍，
-    /// 在 100% DPI 下刚好容纳约 32 个汉字或 60 个西文字符，
-    /// 再宽就会开始盖住任务栏中部的应用按钮。
+    /// 横向时是宽度上限；竖向时是**主轴长度**上限。
+    /// 实际定义在 <see cref="TaskbarWidgetControl.MaxLyricsWidgetLength"/>——
+    /// 因为 <c>TaskbarWidgetControl.MeasureDesiredWidth</c> 也要用它做上限，
+    /// 两处必须同一个值，所以只在控件里定义一份。
     /// </summary>
-    private const double MaxLyricsWidgetWidth = 480;
+    private const double MaxLyricsWidgetWidth = TaskbarWidgetControl.MaxLyricsWidgetLength;
 
     /// <summary>
     /// 任务栏占用区间的缓存有效期。
