@@ -150,6 +150,100 @@ public sealed class LyricSyncServiceTests
         Assert.False(clock.HasPendingTimer);
     }
 
+    // ── 曲终估计：给「不报时间轴」的播放器提供归位依据 ────────────────────
+
+    /// <summary>
+    /// 歌词源声明了曲长时，必须原样推给时间轴层。
+    ///
+    /// 网易云的 SMTC <c>EndTime</c> 恒为 0，QQ 音乐搜索结果的 <c>interval</c>
+    /// 是整条链路上唯一可信的曲长来源；丢了它，本地时钟就没有上限，
+    /// 单曲循环第二遍起歌词永久卡在最后一行。
+    /// </summary>
+    [Fact]
+    public async Task TryApplyResolvedLyrics_PublishesSourceTrackDuration()
+    {
+        var published = new List<TimeSpan?>();
+        using var service = new LyricSyncService(
+            new LateFailureCoordinator(),
+            metadataStabilizationDelay: TimeSpan.Zero,
+            onTrackEndEstimateChanged: published.Add);
+        var track = CreateTrack();
+        await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, track));
+
+        Assert.True(service.TryApplyResolvedLyrics(
+            track,
+            CreateResolvedWithEnd(TimeSpan.FromSeconds(243))));
+
+        Assert.Equal(TimeSpan.FromSeconds(243), service.CurrentTrackEndEstimate);
+        Assert.Equal(TimeSpan.FromSeconds(243), Assert.Single(published));
+    }
+
+    /// <summary>
+    /// 歌词源没给曲长（本地 .lrc）时退化为「末行 + 尾奏余量」。
+    ///
+    /// 退化值必然偏短，所以余量取 30 秒：归位晚了只是第二遍开头几秒仍卡在末行，
+    /// 归位早了会让歌词在歌还没唱完时跳回第一句，后者更像故障。
+    /// </summary>
+    [Fact]
+    public async Task TryApplyResolvedLyrics_FallsBackToLastLinePlusTailMargin()
+    {
+        using var service = new LyricSyncService(
+            new LateFailureCoordinator(),
+            metadataStabilizationDelay: TimeSpan.Zero);
+        var track = CreateTrack();
+        await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, track));
+
+        // 末行 220 秒，无源时长。
+        Assert.True(service.TryApplyResolvedLyrics(
+            track,
+            CreateResolvedWithEnd(sourceTrackDuration: null, lastLineSeconds: 220)));
+
+        Assert.Equal(TimeSpan.FromSeconds(250), service.CurrentTrackEndEstimate);
+    }
+
+    /// <summary>
+    /// 换歌必须把旧曲长清掉并通知出去。否则新歌会沿用上一首的长度，
+    /// 在错误的位置归零——表现为「歌词突然跳回第一句」。
+    /// </summary>
+    [Fact]
+    public async Task GetDisplayFrameAsync_ClearsTrackEndEstimateOnTrackChange()
+    {
+        var published = new List<TimeSpan?>();
+        using var service = new LyricSyncService(
+            new LateFailureCoordinator(),
+            metadataStabilizationDelay: TimeSpan.Zero,
+            onTrackEndEstimateChanged: published.Add);
+        var track = CreateTrack();
+        var snapshot = new PlaybackSnapshot(true, TimeSpan.Zero, track);
+        await service.GetDisplayFrameAsync(snapshot);
+        Assert.True(service.TryApplyResolvedLyrics(
+            track,
+            CreateResolvedWithEnd(TimeSpan.FromSeconds(243))));
+
+        await service.GetDisplayFrameAsync(snapshot with { Track = CreateTrack("Next song") });
+
+        Assert.Null(service.CurrentTrackEndEstimate);
+        Assert.False(published[^1].HasValue);
+    }
+
+    private static ResolvedLyrics CreateResolvedWithEnd(
+        TimeSpan? sourceTrackDuration,
+        double lastLineSeconds = 220) =>
+        new(
+            new ParsedLyrics(
+                [
+                    new ParsedLyricLine(TimeSpan.FromSeconds(10), null, "first"),
+                    new ParsedLyricLine(TimeSpan.FromSeconds(lastLineSeconds), null, "last")
+                ],
+                LyricTimingKind.LineTimed,
+                LyricTimingProvenance.ProviderSupplied,
+                LyricPayloadFormat.Lrc),
+            new LyricProviderId("Test"),
+            "timed-candidate",
+            LyricAcquisitionKind.Remote,
+            new Dictionary<string, string>(),
+            sourceTrackDuration);
+
     private sealed class LateFailureCoordinator : ILyricResolutionCoordinator
     {
         public TaskCompletionSource<LyricResolutionResult> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

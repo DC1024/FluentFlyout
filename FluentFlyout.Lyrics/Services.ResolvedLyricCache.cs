@@ -417,7 +417,8 @@ public sealed class JsonResolvedLyricCache : IContextualResolvedLyricCache, IDis
                 ? null
                 : new Dictionary<string, string>(resolvedLyrics.Diagnostics, StringComparer.Ordinal),
             resolvedLyrics.Content,
-            context);
+            context,
+            resolvedLyrics.SourceTrackDuration);
         return IsValidEntryForTrack(track, entry);
     }
 
@@ -508,7 +509,8 @@ public sealed class JsonResolvedLyricCache : IContextualResolvedLyricCache, IDis
             new LyricProviderId(entry.ProviderId!),
             entry.CandidateId!,
             acquisition,
-            new Dictionary<string, string>(entry.Diagnostics!, StringComparer.Ordinal));
+            new Dictionary<string, string>(entry.Diagnostics!, StringComparer.Ordinal),
+            entry.SourceTrackDuration);
 
     private static bool IsValidContent(ParsedLyrics? content) => GetContentValidationFailure(content) is null;
 

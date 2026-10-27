@@ -34,6 +34,7 @@ public sealed class TimelinePositionStrategyRegistry
     private bool _hasTimelineState;
     private bool _wasPlaying;
     private bool _waitingForResumedTimeline;
+    private TimeSpan? _trackEndEstimate;
 
     public TimelinePositionStrategyRegistry(
         IReadOnlyList<ITimelinePositionStrategy> strategies,
@@ -129,6 +130,25 @@ public sealed class TimelinePositionStrategyRegistry
         }
     }
 
+    /// <summary>
+    /// 下发「这首歌唱到什么时候结束」的估计值。由装配层在歌词解析完成后调用，
+    /// 换歌时传 <c>null</c> 清空。
+    ///
+    /// <para>
+    /// 时间轴策略看不到歌词文档——注册表运行在采样路径上（每 33ms 一次），
+    /// 不该在那里读歌词；所以由外面把结论推给它。所有策略都收到一份，
+    /// 只有本地时钟策略会记住它，其余策略的默认实现直接忽略。
+    /// </para>
+    /// </summary>
+    public void SetTrackEndEstimate(TimeSpan? estimate)
+    {
+        lock (_sync)
+        {
+            _trackEndEstimate = estimate is { } value && value > TimeSpan.Zero ? value : null;
+            BroadcastTrackEndEstimate();
+        }
+    }
+
     public void Reset()
     {
         lock (_sync)
@@ -139,7 +159,21 @@ public sealed class TimelinePositionStrategyRegistry
             _waitingForResumedTimeline = false;
             _wasPlaying = false;
             _lastTrackIdentity = string.Empty;
+            // 会话变了，旧曲目的时长对新曲目毫无意义；留着会让本地时钟
+            // 在错误的位置归零（比如拿一首 3 分钟的上限去卡一首 8 分钟的歌）。
+            _trackEndEstimate = null;
+            BroadcastTrackEndEstimate();
         }
+    }
+
+    private void BroadcastTrackEndEstimate()
+    {
+        foreach (var strategy in _strategies)
+        {
+            strategy.SetTrackEndEstimate(_trackEndEstimate);
+        }
+
+        _defaultStrategy.SetTrackEndEstimate(_trackEndEstimate);
     }
 
     private TimeSpan PreservePositionWhilePlaybackTransitionIsStale(

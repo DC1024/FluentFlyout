@@ -227,6 +227,8 @@
                     <StackPanel Orientation="Vertical">
                         <TextBlock Text="{DynamicResource LyricsOffsetTitle}" FontSize="14" FontWeight="Regular" VerticalAlignment="Center" />
                         <TextBlock Text="{DynamicResource LyricsOffsetDescription}" FontSize="12" Opacity="0.5" />
+                        <TextBlock Text="{DynamicResource LyricsTimelineNotice}" FontSize="12" Opacity="0.5"
+                                   TextWrapping="Wrap" Margin="0,4,0,0" />
                     </StackPanel>
                 </ui:CardControl.Header>
                 <StackPanel Orientation="Horizontal">

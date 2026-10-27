@@ -60,6 +60,21 @@ internal sealed class FluentFlyoutMusicSessionProvider : IMusicSessionProvider
     public TrackInfo? LastTrack { get; private set; }
 
     /// <summary>
+    /// 接收「当前曲目总长」的估计值，转交给时间轴注册表。
+    ///
+    /// <para>
+    /// 曲长不在这里读：SMTC 的 <c>EndTime</c> 在网易云场景恒为 0，
+    /// 唯一可信的来源是歌词源（QQ 音乐的 interval / Lyricify 的 duration）。
+    /// 所以由歌词层算好推过来，这里只做转发。
+    /// </para>
+    /// </summary>
+    /// <param name="estimate">总长；<c>null</c> 表示未知，本地时钟退回无上限行为。</param>
+    internal void SetTrackEndEstimate(TimeSpan? estimate)
+    {
+        _timelineRegistry.SetTrackEndEstimate(estimate);
+    }
+
+    /// <summary>
     /// 通知引擎用户拖动了进度条。返回 true 表示引擎已接管，
     /// 调用方不必再自行纠正位置。
     /// </summary>

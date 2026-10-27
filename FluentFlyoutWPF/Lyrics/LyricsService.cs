@@ -162,7 +162,10 @@ internal sealed class LyricsService : IDisposable
             _coordinator,
             getPlayerLeadTime: _ => TimeSpan.Zero,
             getTrackLeadTime: (track, lyricSource) =>
-                TimeSpan.FromMilliseconds(_offsetStore.GetOffsetMilliseconds(track, lyricSource)));
+                TimeSpan.FromMilliseconds(_offsetStore.GetOffsetMilliseconds(track, lyricSource)),
+            // 歌词解析完成后把「这首多长」推给时间轴层：网易云的 SMTC 连 EndTime
+            // 都是 0，没有这个值本地时钟就只增不减，单曲循环第二遍起歌词会卡在末行。
+            onTrackEndEstimateChanged: _sessionProvider.SetTrackEndEstimate);
 
         _pump = new LyricFramePump(_sessionProvider, _syncService, dispatcher);
         _pump.FrameReady += OnFrameReady;

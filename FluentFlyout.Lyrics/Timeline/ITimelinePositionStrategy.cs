@@ -33,6 +33,21 @@ public interface ITimelinePositionStrategy
     }
 
     /// <summary>
+    /// 接收「这首歌唱到什么时候结束」的估计值。
+    ///
+    /// <para>
+    /// 只有 <see cref="LocalClockTimelinePositionStrategy"/> 真的用到它：没有上限时
+    /// 本地时钟只增不减，单曲循环第二遍起歌词永远停在最后一行。其余策略依赖
+    /// 播放器上报的真实时间轴，听到这个值应当忽略——所以这里给一个空的默认实现，
+    /// 避免为了一个可选能力去改所有策略与测试桩。
+    /// </para>
+    /// </summary>
+    /// <param name="estimate">曲目总长；<c>null</c> 表示未知，策略需退回无上限行为。</param>
+    void SetTrackEndEstimate(TimeSpan? estimate)
+    {
+    }
+
+    /// <summary>
     /// 用户拖动进度条后通知策略。返回 true 表示策略已接管该 seek，
     /// 调用方应跳过后续的旧时间轴覆盖。
     /// </summary>

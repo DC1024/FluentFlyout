@@ -376,7 +376,8 @@ public sealed record ResolvedLyrics
         LyricProviderId providerId,
         string candidateId,
         LyricAcquisitionKind acquisition,
-        IReadOnlyDictionary<string, string> diagnostics)
+        IReadOnlyDictionary<string, string> diagnostics,
+        TimeSpan? sourceTrackDuration = null)
     {
         ArgumentNullException.ThrowIfNull(content);
         if (string.IsNullOrWhiteSpace(candidateId))
@@ -389,6 +390,9 @@ public sealed record ResolvedLyrics
         CandidateId = candidateId;
         Acquisition = acquisition;
         Diagnostics = diagnostics;
+        SourceTrackDuration = sourceTrackDuration is { } duration && duration > TimeSpan.Zero
+            ? duration
+            : null;
     }
 
     public ParsedLyrics Content { get; }
@@ -396,4 +400,28 @@ public sealed record ResolvedLyrics
     public string CandidateId { get; }
     public LyricAcquisitionKind Acquisition { get; }
     public IReadOnlyDictionary<string, string> Diagnostics { get; }
+
+    /// <summary>
+    /// 歌词源声明的曲目时长。未知时为 <c>null</c>。
+    ///
+    /// <para>
+    /// 来源：QQ 音乐的 <c>interval</c> 字段、Lyricify payload 的 <c>duration</c>，
+    /// 即 <see cref="SourceTrackCandidate.Duration"/>。本地 <c>.lrc</c> 文件没有这个信息。
+    /// </para>
+    ///
+    /// <para>
+    /// <b>为什么要一路带到解析结果里。</b>网易云的 SMTC 连 <c>EndTime</c> 都是 0，
+    /// 于是「这首歌总长多少」在系统层完全拿不到。而
+    /// <see cref="Timeline.LocalClockTimelinePositionStrategy"/> 需要它来判断
+    /// 「一遍已经唱完」——没有上限时本地时钟只增不减，单曲循环第二遍起
+    /// 歌词会永久冻结在最后一行。歌词源本来查得到这个数，只是在管线里被丢掉了。
+    /// </para>
+    ///
+    /// <para>
+    /// 与 <see cref="SourceTrackCandidate.Duration"/> 的区别：后者是「候选歌曲的时长」，
+    /// 用于匹配打分与偏移记录的时长桶；这里是「最终采纳的那份歌词对应的时长」，
+    /// 只服务于时间轴。
+    /// </para>
+    /// </summary>
+    public TimeSpan? SourceTrackDuration { get; }
 }

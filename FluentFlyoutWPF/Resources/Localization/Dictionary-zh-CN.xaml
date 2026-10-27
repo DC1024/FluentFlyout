@@ -330,6 +330,7 @@
     <system:String x:Key="LyricsAlignmentRight">右对齐</system:String>
     <system:String x:Key="LyricsOffsetTitle">当前歌曲偏移</system:String>
     <system:String x:Key="LyricsOffsetDescription">正值让歌词提前，负值延后，单位毫秒。按歌曲单独保存</system:String>
+    <system:String x:Key="LyricsTimelineNotice">网易云、酷狗等播放器不向系统报告播放进度，歌词按本次播放的起点计时。从中间续播或拖动进度条后，请用上面的偏移校正。</system:String>
     <system:String x:Key="LyricsVerticalTaskbarNote">竖向任务栏上歌词会自动换行铺满整条任务栏，不会压成单行。</system:String>
     <system:String x:Key="LyricsSourceNote">歌词来自 QQ 音乐、酷狗、网易云与 LRCLIB。首次播放某首歌时需要联网检索，之后会缓存到本地。</system:String>
 </ResourceDictionary>

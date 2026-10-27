@@ -245,6 +245,134 @@ public sealed class LocalClockTimelineStrategyTests
         Assert.False(registry.NotifySeek(Netease, TimeSpan.FromSeconds(90), FileTimeZero));
     }
 
+    // ── 曲终归零（单曲循环）───────────────────────────────────────────────
+
+    /// <summary>
+    /// 单曲循环时曲目身份（AUMID / 标题 / 歌手）三件套全不变，
+    /// 「换歌归零」永远不触发。没有曲长上限时位置只增不减，
+    /// 而歌词行的时间戳止于最后一句，于是第二遍起选位永远命中末行。
+    /// </summary>
+    [Fact]
+    public void SelectPosition_RestartsAtZeroWhenTrackEndIsReached()
+    {
+        var clock = new ManualTimeProvider();
+        var strategy = new LocalClockTimelinePositionStrategy(clock);
+        strategy.SetTrackEndEstimate(TimeSpan.FromSeconds(60));
+        var sample = Sample(Netease, playing: true, raw: 0, updated: FileTimeZero);
+
+        Assert.Equal(TimeSpan.Zero, strategy.SelectPosition(in sample));
+
+        clock.AdvanceSeconds(59);
+        Assert.Equal(TimeSpan.FromSeconds(59), strategy.SelectPosition(in sample));
+
+        // 越过曲长 = 一遍唱完：回到开头重新计时。
+        clock.AdvanceSeconds(1);
+        Assert.Equal(TimeSpan.Zero, strategy.SelectPosition(in sample));
+
+        clock.AdvanceSeconds(3);
+        Assert.Equal(TimeSpan.FromSeconds(3), strategy.SelectPosition(in sample));
+    }
+
+    /// <summary>
+    /// 没有曲长时必须保持修复前的行为（一直累加），
+    /// 不能凭空造一个上限——那会让正常播放的歌在中途突然跳回第一句。
+    /// </summary>
+    [Fact]
+    public void SelectPosition_KeepsAccumulatingWithoutTrackEndEstimate()
+    {
+        var clock = new ManualTimeProvider();
+        var strategy = new LocalClockTimelinePositionStrategy(clock);
+        var sample = Sample(Netease, playing: true, raw: 0, updated: FileTimeZero);
+
+        strategy.SelectPosition(in sample);
+        clock.AdvanceSeconds(600);
+
+        Assert.Equal(TimeSpan.FromSeconds(600), strategy.SelectPosition(in sample));
+    }
+
+    /// <summary>
+    /// 明显短于合理下限的曲长一律不采信。
+    /// 若采信，归零会每帧触发，位置永远锁在 0——歌词停在第一行，
+    /// 这比「卡在最后一行」更难让人联想到是时长数据的问题。
+    /// </summary>
+    [Fact]
+    public void SetTrackEndEstimate_IgnoresImplausiblyShortDurations()
+    {
+        var clock = new ManualTimeProvider();
+        var strategy = new LocalClockTimelinePositionStrategy(clock);
+        strategy.SetTrackEndEstimate(TimeSpan.FromSeconds(5));
+        var sample = Sample(Netease, playing: true, raw: 0, updated: FileTimeZero);
+
+        strategy.SelectPosition(in sample);
+        clock.AdvanceSeconds(10);
+
+        Assert.Equal(TimeSpan.FromSeconds(10), strategy.SelectPosition(in sample));
+    }
+
+    /// <summary>
+    /// 暂停在最后几秒时不能归零：歌词该停在用户看到的那一句上。
+    /// 归零会让它在歌还没重播时跳回第一句。
+    /// </summary>
+    [Fact]
+    public void SelectPosition_DoesNotRestartWhilePausedAtTrackEnd()
+    {
+        var clock = new ManualTimeProvider();
+        var strategy = new LocalClockTimelinePositionStrategy(clock);
+        strategy.SetTrackEndEstimate(TimeSpan.FromSeconds(60));
+
+        var playing = Sample(Netease, playing: true, raw: 0, updated: FileTimeZero);
+        var paused = Sample(Netease, playing: false, raw: 0, updated: FileTimeZero);
+
+        strategy.SelectPosition(in playing);
+        clock.AdvanceSeconds(59);
+        Assert.Equal(TimeSpan.FromSeconds(59), strategy.SelectPosition(in playing));
+
+        // 暂停后时钟继续走，但位置必须冻在 59 秒，不能越过曲长而回到 0。
+        clock.AdvanceSeconds(10);
+        Assert.Equal(TimeSpan.FromSeconds(59), strategy.SelectPosition(in paused));
+
+        // 恢复播放才继续累计，越过曲长后才归零。
+        Assert.Equal(TimeSpan.FromSeconds(59), strategy.SelectPosition(in playing));
+        clock.AdvanceSeconds(1);
+        Assert.Equal(TimeSpan.Zero, strategy.SelectPosition(in playing));
+    }
+
+    /// <summary>整条链路（含保位层）走通：时间戳恒坏时也能靠曲长归位。</summary>
+    [Fact]
+    public void Registry_RestartsAtZeroWhenTrackEndIsReached()
+    {
+        var clock = new ManualTimeProvider();
+        var registry = TimelinePositionStrategyRegistry.CreateDefault(clock);
+        var sample = Sample(Netease, playing: true, raw: 0, updated: FileTimeZero);
+
+        registry.SetTrackEndEstimate(TimeSpan.FromSeconds(60));
+        Assert.Equal(TimeSpan.Zero, registry.Select(in sample).Position);
+
+        clock.AdvanceSeconds(60);
+        Assert.Equal(TimeSpan.Zero, registry.Select(in sample).Position);
+    }
+
+    /// <summary>
+    /// 换会话时旧曲长必须失效。留着会让新歌在上一首的长度处归零，
+    /// 表现为「播到一半歌词突然跳回开头」，比不修更糟。
+    /// </summary>
+    [Fact]
+    public void Registry_ForgetsTrackEndEstimateOnReset()
+    {
+        var clock = new ManualTimeProvider();
+        var registry = TimelinePositionStrategyRegistry.CreateDefault(clock);
+        var sample = Sample(Netease, playing: true, raw: 0, updated: FileTimeZero);
+
+        registry.SetTrackEndEstimate(TimeSpan.FromSeconds(60));
+        registry.Select(in sample);
+        registry.Reset();
+
+        registry.Select(in sample);
+        clock.AdvanceSeconds(60);
+
+        Assert.Equal(TimeSpan.FromSeconds(60), registry.Select(in sample).Position);
+    }
+
     private static TimelineSample Sample(
         string source,
         bool playing,

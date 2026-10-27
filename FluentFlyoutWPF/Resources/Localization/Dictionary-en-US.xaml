@@ -326,6 +326,7 @@ You can help contribute translations on</System:String>
     <System:String x:Key="LyricsAlignmentRight">Right</System:String>
     <System:String x:Key="LyricsOffsetTitle">Offset for current track</System:String>
     <System:String x:Key="LyricsOffsetDescription">Positive makes lyrics earlier, negative later, in milliseconds. Saved per track</System:String>
+    <System:String x:Key="LyricsTimelineNotice">NetEase Cloud Music, Kugou and similar players do not report playback position to the system, so lyrics count from the start of the current playback. After resuming mid-track or after seeking, correct it with the offset above.</System:String>
     <System:String x:Key="LyricsVerticalTaskbarNote">On a vertical taskbar, lyrics wrap and fill the whole taskbar instead of being squeezed into one line.</System:String>
     <System:String x:Key="LyricsSourceNote">Lyrics come from QQ Music, Kugou, NetEase and LRCLIB. The first play of a track needs a network lookup; results are cached locally afterwards.</System:String>
 </ResourceDictionary>
