@@ -61,6 +61,25 @@ internal sealed class LyricsService : IDisposable
     private string? _lastFrameTitle;
 
     /// <summary>
+    /// 同一首歌连续产出「空行」帧的次数。
+    ///
+    /// 为什么要专门数：<b>「没开歌词」和「开了但搜不到词」在现象上完全一样</b>
+    /// ——任务栏小组件都显示原样，用户无法区分，日志里也看不出。
+    /// 这里在连续空帧超过阈值后打一条 Warn，把「这首歌没拿到歌词」这件事
+    /// 落到日志里，排查时就不必再靠猜。
+    ///
+    /// 阈值取 <see cref="EmptyFrameReportThreshold"/> 次 tick：帧泵约 33 ms
+    /// 一次，约合 3 秒——足够覆盖一次正常的远程检索（实测单曲 0.8 秒内命中）。
+    /// </summary>
+    private int _emptyFrameStreak;
+
+    /// <summary>已经为哪首歌报过「没拿到歌词」，避免同一首歌刷屏。</summary>
+    private string? _emptyReportedForTitle;
+
+    /// <summary>连续空帧多少次之后报一次日志。见 <see cref="_emptyFrameStreak"/>。</summary>
+    private const int EmptyFrameReportThreshold = 90;
+
+    /// <summary>
     /// 当前曲目的歌词源（如 <c>qqmusic</c>）。偏移按「曲目 + 源」存，
     /// 写回时必须带上它，否则会存到另一条记录上。
     /// </summary>
@@ -172,6 +191,20 @@ internal sealed class LyricsService : IDisposable
             return;
         }
 
+        // 只在状态真的变化时记日志：这个方法被设置钩子和窗口 Loaded
+        // 反复调用，逐次记录会变成噪音。
+        if (enabled != _pump.IsRunning)
+        {
+            Logger.Info("Lyrics frame pump {0}", enabled ? "started" : "stopped");
+
+            if (!enabled)
+            {
+                // 停泵后重置诊断状态，下次开启重新计数。
+                _emptyFrameStreak = 0;
+                _emptyReportedForTitle = null;
+            }
+        }
+
         if (enabled)
         {
             _pump.Start();
@@ -210,7 +243,62 @@ internal sealed class LyricsService : IDisposable
             CurrentTrackChanged?.Invoke(this, frame.Title);
         }
 
+        TrackEmptyFrameDiagnostics(frame);
+
         FrameReady?.Invoke(this, frame);
+    }
+
+    /// <summary>
+    /// 连续空帧计数与一次性上报。见 <see cref="_emptyFrameStreak"/> 的说明。
+    ///
+    /// 判据是 <c>CurrentLine</c> 为空而不是 <c>CurrentLineIndex &lt; 0</c>：
+    /// 逐字歌词（QRC）在某一行刚开始时可能还没有索引，但行文本已经有了，
+    /// 那种帧是正常的，不该计进空帧。
+    /// </summary>
+    private void TrackEmptyFrameDiagnostics(LyricDisplayFrame frame)
+    {
+        // 没有曲目时不算「这首歌拿不到歌词」——那只是没在放歌。
+        // 把它计进空帧会让日志里出现与问题无关的告警，误导排查方向。
+        if (string.IsNullOrEmpty(frame.Title))
+        {
+            _emptyFrameStreak = 0;
+            _emptyReportedForTitle = null;
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(frame.CurrentLine))
+        {
+            // 拿到词了，链条是通的；同一首歌以后即使再变空也不重复报警。
+            _emptyFrameStreak = 0;
+            return;
+        }
+
+        _emptyFrameStreak++;
+
+        if (_emptyFrameStreak < EmptyFrameReportThreshold)
+        {
+            return;
+        }
+
+        // 已经为这首歌报过就不再刷屏。换歌时 title 变化，
+        // 比较自然失败，于是新歌会重新走一遍上报流程。
+        if (string.Equals(_emptyReportedForTitle, frame.Title, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _emptyReportedForTitle = frame.Title;
+
+        // 用 Warn 而不是 Debug：默认 NLog 配置是 minlevel="Info"，
+        // Debug 写进去也看不见——这个诊断的意义就没了。
+        Logger.Warn(
+            "No lyric line for \"{0}\" after {1} consecutive empty frames; the resolution chain likely failed for this track",
+            frame.Title,
+            _emptyFrameStreak);
+
+        // 报过之后把计数钉在阈值上：日志里的数字不会无限增长，
+        // 也免得长时间播放后这个 int 被推到没意义的量级。
+        _emptyFrameStreak = EmptyFrameReportThreshold;
     }
 
     private void OnTickFailed(object? sender, Exception exception)

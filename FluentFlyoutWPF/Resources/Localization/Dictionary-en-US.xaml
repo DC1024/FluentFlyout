@@ -303,6 +303,9 @@ You can help contribute translations on</System:String>
     <System:String x:Key="LyricsTitle">Lyrics</System:String>
     <System:String x:Key="LyricsDescription">Show synchronized lyrics for the current track in the taskbar widget, with word-by-word highlighting, a translation line, and wrapping on vertical taskbars.</System:String>
     <System:String x:Key="LyricsRequiresWidgetWarning">Lyrics are drawn on the taskbar widget. Enable it under "Taskbar Widget" first.</System:String>
+    <System:String x:Key="LyricsVisualizerConflictTitle">The visualizer is using the taskbar widget</System:String>
+    <System:String x:Key="LyricsVisualizerConflictMessage">Lyrics and the visualizer share the same spot, so enabling one turns the other off. You enabled the visualizer under "Visualizer", which switched lyrics off.</System:String>
+    <System:String x:Key="LyricsVisualizerConflictAction">Turn off visualizer and enable lyrics</System:String>
     <System:String x:Key="LyricsEnabledTitle">Show lyrics on the taskbar</System:String>
     <System:String x:Key="LyricsEnabledDescription">Replace the song title and artist with lyrics. Mutually exclusive with the visualizer</System:String>
     <System:String x:Key="LyricsFontSizeTitle">Lyrics font size</System:String>
