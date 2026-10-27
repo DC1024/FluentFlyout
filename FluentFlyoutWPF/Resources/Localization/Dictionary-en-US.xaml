@@ -240,6 +240,7 @@ You can help contribute translations on</System:String>
     <System:String x:Key="TrayIcon_SettingsOption">Settings</System:String>
     <System:String x:Key="TrayIcon_GitHubRepositoryOption">Repository</System:String>
     <System:String x:Key="TrayIcon_ViewLogsOption">View logs</System:String>
+    <System:String x:Key="TrayIcon_LyricsOffsetOption">Adjust lyric offset for current track</System:String>
     <System:String x:Key="TrayIcon_ReportBugOption">Report bug</System:String>
     <System:String x:Key="TrayIcon_QuitOption">Quit FluentFlyout</System:String>
     <System:String x:Key="PixelsUnit">px</System:String>
@@ -297,4 +298,31 @@ You can help contribute translations on</System:String>
     <System:String x:Key="VolumeMixerHighlightDescription">See which apps are currently outputting audio</System:String>
     <System:String x:Key="MasterVolumeText">Master volume</System:String>
     <System:String x:Key="OpenMediaPlayerText">Open media player</System:String>
+
+    <!-- Lyrics -->
+    <System:String x:Key="LyricsTitle">Lyrics</System:String>
+    <System:String x:Key="LyricsDescription">Show synchronized lyrics for the current track in the taskbar widget, with word-by-word highlighting, a translation line, and wrapping on vertical taskbars.</System:String>
+    <System:String x:Key="LyricsRequiresWidgetWarning">Lyrics are drawn on the taskbar widget. Enable it under "Taskbar Widget" first.</System:String>
+    <System:String x:Key="LyricsEnabledTitle">Show lyrics on the taskbar</System:String>
+    <System:String x:Key="LyricsEnabledDescription">Replace the song title and artist with lyrics. Mutually exclusive with the visualizer</System:String>
+    <System:String x:Key="LyricsFontSizeTitle">Lyrics font size</System:String>
+    <System:String x:Key="LyricsFontSizeDescription">In pixels. Shrinks automatically when the taskbar is too short</System:String>
+    <System:String x:Key="LyricsShowTranslationTitle">Show translation line</System:String>
+    <System:String x:Key="LyricsShowTranslationDescription">The second line shows the translation when available, otherwise the next line</System:String>
+    <System:String x:Key="LyricsWordScanTitle">Word-by-word highlight</System:String>
+    <System:String x:Key="LyricsWordScanDescription">Light up the current line as it is sung. Turn off to reduce CPU usage</System:String>
+    <System:String x:Key="LyricsSingleLineTitle">Force single line</System:String>
+    <System:String x:Key="LyricsSingleLineDescription">Show only the current line, without translation or next-line preview. When off, the layout adapts to taskbar height automatically</System:String>
+    <System:String x:Key="LyricsColorTitle">Lyrics color</System:String>
+    <System:String x:Key="LyricsColorDescription">Leave empty to follow the system theme. Accepts #RRGGBB, #AARRGGBB or #RGB</System:String>
+    <System:String x:Key="LyricsColorPlaceholder">Follow system theme</System:String>
+    <System:String x:Key="LyricsAlignmentTitle">Text alignment</System:String>
+    <System:String x:Key="LyricsAlignmentDescription">Horizontal position of short lines within the available width. Long lines that need scrolling always start from the left</System:String>
+    <System:String x:Key="LyricsAlignmentLeft">Left</System:String>
+    <System:String x:Key="LyricsAlignmentCenter">Center</System:String>
+    <System:String x:Key="LyricsAlignmentRight">Right</System:String>
+    <System:String x:Key="LyricsOffsetTitle">Offset for current track</System:String>
+    <System:String x:Key="LyricsOffsetDescription">Positive makes lyrics earlier, negative later, in milliseconds. Saved per track</System:String>
+    <System:String x:Key="LyricsVerticalTaskbarNote">On a vertical taskbar, lyrics wrap and fill the whole taskbar instead of being squeezed into one line.</System:String>
+    <System:String x:Key="LyricsSourceNote">Lyrics come from QQ Music, Kugou, NetEase and LRCLIB. The first play of a track needs a network lookup; results are cached locally afterwards.</System:String>
 </ResourceDictionary>

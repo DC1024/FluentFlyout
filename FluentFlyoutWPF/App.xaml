@@ -34,6 +34,8 @@
 
             <converters:NullToVisibilityConverter x:Key="NullToVisibleConverter" />
             <converters:NullToVisibilityConverter x:Key="NullToCollapsedConverter" NullValue="Collapsed" NonNullValue="Visible" />
+
+            <converters:LyricsColorBrushConverter x:Key="LyricsColorBrushConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

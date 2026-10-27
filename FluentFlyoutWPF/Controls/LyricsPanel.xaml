@@ -1,0 +1,58 @@
+<UserControl x:Class="FluentFlyout.Controls.LyricsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignHeight="40" d:DesignWidth="200"
+             TextOptions.TextRenderingMode="ClearType" TextOptions.TextFormattingMode="Ideal"
+             VerticalAlignment="Center" HorizontalAlignment="Left"
+             ClipToBounds="True">
+
+    <!--
+        两行结构刻意用 Grid + 两个固定高度行，而不是 StackPanel：
+        StackPanel 在高度不够时会把子项压扁，Grid 则是直接裁掉，
+        后者更符合「宁可少一行也不要把字压变形」的期望。
+
+        每一行是 Canvas + TextBlock 的组合，与现有 SongTitle/SongArtist
+        保持同一手法（Canvas 做裁剪视口、TextBlock 挂 TranslateTransform），
+        这样长句滚动可以复用同一套动画思路。
+    -->
+    <Grid x:Name="RootGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition x:Name="PrimaryRow" Height="Auto" />
+            <RowDefinition x:Name="SecondaryRow" Height="0" />
+        </Grid.RowDefinitions>
+
+        <!-- 当前行 -->
+        <Canvas x:Name="PrimaryContainer" Grid.Row="0" ClipToBounds="True" Height="19">
+            <TextBlock x:Name="PrimaryText" Text="" FontWeight="Medium">
+                <TextBlock.RenderTransform>
+                    <TranslateTransform />
+                </TextBlock.RenderTransform>
+            </TextBlock>
+
+            <!--
+                逐字扫描的覆盖层：与 PrimaryText 完全重叠，
+                靠 OpacityMask 的渐变位置控制「已唱到哪」。
+                初始 Collapsed，只有帧里带 WordScanProgress 时才显示。
+            -->
+            <TextBlock x:Name="PrimaryScanText" Text="" FontWeight="Medium"
+                       IsHitTestVisible="False" Visibility="Collapsed">
+                <TextBlock.RenderTransform>
+                    <TranslateTransform />
+                </TextBlock.RenderTransform>
+            </TextBlock>
+        </Canvas>
+
+        <!-- 次要行：翻译行，或（无翻译时）下一行预览 -->
+        <Canvas x:Name="SecondaryContainer" Grid.Row="1" ClipToBounds="True" Height="19"
+                Visibility="Collapsed">
+            <TextBlock x:Name="SecondaryText" Text="" FontWeight="Normal" Opacity="0.7">
+                <TextBlock.RenderTransform>
+                    <TranslateTransform />
+                </TextBlock.RenderTransform>
+            </TextBlock>
+        </Canvas>
+    </Grid>
+</UserControl>

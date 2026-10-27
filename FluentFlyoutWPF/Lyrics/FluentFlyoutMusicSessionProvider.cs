@@ -51,6 +51,15 @@ internal sealed class FluentFlyoutMusicSessionProvider : IMusicSessionProvider
     public string? LastSessionId { get; private set; }
 
     /// <summary>
+    /// 最近一次采样得到的曲目。没有播放内容时为 <c>null</c>。
+    ///
+    /// 暴露出来是为了让装配层能拿到「当前是哪首歌」——
+    /// 单曲偏移的存取需要完整的 <see cref="TrackInfo"/> 做定位键，
+    /// 而帧里只有标题文本。
+    /// </summary>
+    public TrackInfo? LastTrack { get; private set; }
+
+    /// <summary>
     /// 通知引擎用户拖动了进度条。返回 true 表示引擎已接管，
     /// 调用方不必再自行纠正位置。
     /// </summary>
@@ -75,6 +84,7 @@ internal sealed class FluentFlyoutMusicSessionProvider : IMusicSessionProvider
         if (session?.ControlSession is not { } control)
         {
             LastSessionId = null;
+            LastTrack = null;
             _timelineRegistry.Reset();
             return Task.FromResult(new PlaybackSnapshot(false, TimeSpan.Zero, Track: null));
         }
@@ -90,6 +100,7 @@ internal sealed class FluentFlyoutMusicSessionProvider : IMusicSessionProvider
         var properties = TryGetMediaProperties(control);
         if (properties is null)
         {
+            LastTrack = null;
             return Task.FromResult(new PlaybackSnapshot(false, TimeSpan.Zero, Track: null));
         }
 
@@ -124,6 +135,8 @@ internal sealed class FluentFlyoutMusicSessionProvider : IMusicSessionProvider
             // QQ 音乐 / 网易云 / 酷狗 的官方歌词源。
             sessionId,
             timeline?.EndTime ?? TimeSpan.Zero);
+
+        LastTrack = track;
 
         return Task.FromResult(new PlaybackSnapshot(
             isPlaying,

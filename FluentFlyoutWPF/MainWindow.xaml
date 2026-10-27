@@ -293,6 +293,14 @@
                         </ui:MenuItem.Icon>
                     </ui:MenuItem>
                     <Separator></Separator>
+                    <!-- 歌词偏移微调：只在歌词模式实际生效时可见，
+                         见 UpdateLyricsTrayMenu。 -->
+                    <ui:MenuItem x:Name="NotifyIconLyricsOffset" Header="{DynamicResource TrayIcon_LyricsOffsetOption}" Click="openLyricsOffset" Visibility="Collapsed">
+                        <ui:MenuItem.Icon>
+                            <ui:SymbolIcon Symbol="Timer20"/>
+                        </ui:MenuItem.Icon>
+                    </ui:MenuItem>
+                    <Separator></Separator>
                     <ui:MenuItem x:Name="NotifyIconQuit" Header="{DynamicResource TrayIcon_QuitOption}" Click="NotifyIconQuit_Click">
                         <ui:MenuItem.Icon>
                             <ui:SymbolIcon Symbol="ArrowExit20"/>

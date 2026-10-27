@@ -3,6 +3,8 @@
 
 using FluentFlyout.Classes.Settings;
 using FluentFlyout.Classes.Utils;
+using FluentFlyout.Lyrics.Layout;
+using FluentFlyout.Lyrics.Models;
 using FluentFlyoutWPF;
 using System.Windows;
 using System.Windows.Controls;
@@ -40,6 +42,19 @@ public partial class TaskbarWidgetControl : UserControl
     private readonly double _scale = 0.9;
     private readonly int _nativeWidgetsPadding = 216;
 
+    /// <summary>
+    /// 歌词模式下这块占位「最多能占多大」的上限（DIP 视觉长度）。
+    ///
+    /// 横向时是宽度上限；竖向时是**主轴长度**上限。同一常量两种含义，
+    /// 因为两者都是「沿可协商方向能占多少」——横向能协商宽度，
+    /// 竖向能协商的只有长度（宽度被任务栏本身钉死）。
+    ///
+    /// 取 480 的理由：一句歌词按 13px 字号要 300–450 DIP 才不截断。
+    /// 480 是 216 的 2.2 倍，在 100% DPI 下刚好容纳约 32 个汉字
+    /// 或 60 个西文字符，再大就会开始盖住任务栏中部的应用按钮。
+    /// </summary>
+    public const double MaxLyricsWidgetLength = 480;
+
     // Cached width calculations
     private string _cachedTitleText = string.Empty;
     private string _cachedArtistText = string.Empty;
@@ -64,6 +79,12 @@ public partial class TaskbarWidgetControl : UserControl
     private bool _isPaused;
     private bool _isVertical;
     private bool _isSmallTaskbar;
+
+    /// <summary>
+    /// 歌词模式是否开启。开启后 LyricsPanel 取代 SongInfoStackPanel，
+    /// 且 UpdateMarquees 不再驱动标题滚动动画。
+    /// </summary>
+    private bool _isLyricsMode;
 
     public TaskbarWidgetControl()
     {
@@ -114,32 +135,75 @@ public partial class TaskbarWidgetControl : UserControl
         }
     }
 
+    /// <summary>
+    /// 切换竖向任务栏模式。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>TaskbarWindow.PositionWidget</c> 每次 <c>UpdatePosition</c> 都会调到这里
+    /// （1.5s 定时器 + 每次换歌 + 每次歌词换行）。方法体本身是幂等的，
+    /// 但有两件事不能无条件做：
+    /// </para>
+    /// <list type="bullet">
+    /// <item><b>重算歌词度量</b>——<see cref="LyricsPanel.ApplyMetrics"/>
+    /// 会改字号与行高，等于定时触发一次重排。</item>
+    /// <item><b>新建变换对象</b>——每次 new 一个 <see cref="RotateTransform"/>
+    /// 赋给 <c>RenderTransform</c>，会让 WPF 丢弃旧的渲染缓存重新合成；
+    /// 4 个元素 × 每 1.5s 一次，在低端机上是可以量到的抖动。</item>
+    /// </list>
+    /// <para>两者都用 <c>changed</c> 把关。</para>
+    /// </remarks>
     public void SetVerticalMode(bool isVertical)
     {
+        var changed = _isVertical != isVertical;
         _isVertical = isVertical;
-        SongInfoStackPanel.Visibility = isVertical ? Visibility.Collapsed : Visibility.Visible;
-        SongArtistContainer.Visibility = !_isSmallTaskbar && !isVertical && !string.IsNullOrEmpty(_actualArtist)
-            ? Visibility.Visible
-            : Visibility.Collapsed;
 
-        var counterRotate = isVertical ? new RotateTransform(-90) : null;
+        // 歌词面板的竖向排版与标题区不同：标题区在竖向任务栏上是直接隐藏，
+        // 歌词必须显示。这里只切面板自身的 Orientation，具体排版由它负责。
+        // 它自己也有方向未变时的早退，重复调用无代价。
+        LyricsPanel.SetVerticalMode(isVertical);
 
-        SongImageBorder.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
-        SongImageBorder.RenderTransform = (Transform?)counterRotate ?? Transform.Identity;
+        UpdateTextRegionVisibility();
 
-        foreach (var button in new Wpf.Ui.Controls.Button[] { PreviousButton, PlayPauseButton, NextButton })
+        if (changed)
         {
-            button.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
-            button.RenderTransform = (Transform?)counterRotate ?? Transform.Identity;
+            // 变换只在方向真的翻转时重建。横向时赋 Transform.Identity 而不是
+            // null，避免 RenderTransform 在 null 与非 null 之间来回切也触发合成失效。
+            //
+            // 每个元素单独 new 一份而不是共用同一个实例：共用在 WPF 里是合法的
+            // （Freezable 支持多父级），但一旦将来有人想给某个按钮单独加角度，
+            // 共用会静默地把另外三个一起改掉。这里方向切换最多每秒一次，
+            // 四份对象的代价可以忽略。
+            void ApplyCounterRotation(FrameworkElement element)
+            {
+                element.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
+                element.RenderTransform = isVertical ? new RotateTransform(-90) : Transform.Identity;
+            }
+
+            ApplyCounterRotation(SongImageBorder);
+
+            foreach (var button in new Wpf.Ui.Controls.Button[] { PreviousButton, PlayPauseButton, NextButton })
+            {
+                ApplyCounterRotation(button);
+            }
+
+            RefreshLyricsMetrics();
         }
     }
 
+    /// <summary>
+    /// 切换小任务栏模式（任务栏短边 &lt; 40 DIP）。
+    /// </summary>
+    /// <remarks>
+    /// 小任务栏会把歌词压成单行（28px 装不下两行），所以这里也参与度量推导，
+    /// 同样要 <c>changed</c> 把关。判定用的是 DIP 高度，与 DPI 无关——
+    /// 150% 下物理 60px 的任务栏仍是 40 DIP，不会被误判成小任务栏。
+    /// </remarks>
     public void SetSmallTaskbarMode(bool isSmallTaskbar)
     {
+        var changed = _isSmallTaskbar != isSmallTaskbar;
         _isSmallTaskbar = isSmallTaskbar;
-        SongArtistContainer.Visibility = !isSmallTaskbar && !_isVertical && !string.IsNullOrEmpty(_actualArtist)
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        UpdateTextRegionVisibility();
 
         double coverImageSize = isSmallTaskbar ? SmallCoverImageSize : DefaultCoverImageSize;
         SongImageBorder.Width = coverImageSize;
@@ -152,6 +216,411 @@ public partial class TaskbarWidgetControl : UserControl
             button.Width = controlButtonSize;
             button.Height = controlButtonSize;
         }
+
+        if (changed)
+        {
+            RefreshLyricsMetrics();
+        }
+    }
+
+    /// <summary>
+    /// 按当前的「方向 + 是否小任务栏」重新推导歌词度量。
+    ///
+    /// 只在影响度量的输入真的变化时调用（<see cref="SetVerticalMode"/>、
+    /// <see cref="SetSmallTaskbarMode"/>、<see cref="SetLyricsMode"/>）。
+    /// <b>不要放进帧循环，也不要每次 UpdatePosition 都走一遍</b>——
+    /// <see cref="LyricsPanel.ApplyMetrics"/> 会改字号与行高，触发整块重排。
+    ///
+    /// 为什么需要它：<see cref="BuildLyricsMetrics"/> 同时依赖
+    /// <c>_isVertical</c> 与 <c>_isSmallTaskbar</c>。改动前它只在
+    /// <see cref="SetLyricsMode"/> 里被调用一次，于是用户把任务栏从横向
+    /// 改成竖向（或换成小任务栏）后，歌词面板还挂着旧的字号与行高：
+    /// 竖向时本该「不强制单行、靠换行吃满主轴长度」，却仍按横向的度量排版。
+    /// </remarks>
+    public void RefreshLyricsMetrics()
+    {
+        if (!_isLyricsMode)
+        {
+            return;
+        }
+
+        LyricsPanel.ApplyMetrics(BuildLyricsMetrics());
+    }
+
+    /// <summary>
+    /// 把「纯偏好类」歌词设置刷到面板上：翻译行开关、逐字扫描开关。
+    ///
+    /// 与 <see cref="RefreshLyricsMetrics"/> 分开是因为代价不同：
+    /// 这个方法只写两个 bool，不触发重排；度量会改字号与行高，
+    /// 必然重排一次。设置界面改字号时两个都要调，改开关时只调这个。
+    /// </summary>
+    public void RefreshLyricsOptions()
+    {
+        if (!_isLyricsMode)
+        {
+            return;
+        }
+
+        var settings = SettingsManager.Current;
+        LyricsPanel.ShowTranslation = settings.LyricsShowTranslation;
+        LyricsPanel.WordScanEnabled = settings.LyricsWordScanEnabled;
+
+        // 翻译开关可能让次要行整块出现或消失，竖向折行高度必须重量。
+        // 横向不需要：行高是固定的，只是文本变空。
+        LyricsPanel.RefreshSecondaryLineLayout();
+    }
+
+    /// <summary>
+    /// 只刷「外观」类歌词设置：主行颜色、对齐。
+    ///
+    /// 与 <see cref="RefreshLyricsMetrics"/> 的区别：这两项都不影响字号与行高，
+    /// 所以**不触发重排**——改个颜色不该让整块任务栏重新 <c>SetWindowPos</c>。
+    /// 与 <see cref="RefreshLyricsOptions"/> 的区别：那两个开关会改变次要行
+    /// 是否显示（进而改变竖向折行高度），这两个不会。
+    /// </summary>
+    public void RefreshLyricsAppearance()
+    {
+        if (!_isLyricsMode)
+        {
+            return;
+        }
+
+        var settings = SettingsManager.Current;
+        var previousAlignment = LyricsPanel.Alignment;
+
+        LyricsPanel.SetUserPrimaryColor(ResolveUserLyricsColor(settings.LyricsColor));
+        LyricsPanel.SetAlignment(LyricsAlignmentPolicy.FromSetting(settings.LyricsAlignment));
+
+        // 对齐方式变化会改变小组件的宽度策略（见 CalculateLyricsWidth：
+        // 非左对齐要撑满预算）。宽度变了就必须重新走一次
+        // CalculateSize，否则面板还挂在旧宽度上，居中看起来仍是左对齐。
+        //
+        // 这里直接通知宿主重排，而不是走 LyricsPanel.DesiredWidthChanged：
+        // 那个事件的语义是「内容宽度变了」，宿主的处理器会拿宽度值做
+        // 阈值比较；对齐切换时内容宽度可能一个字都没变，但**容器**宽度
+        // 必须变，阈值判断会把它当成噪声丢掉。
+        if (previousAlignment != LyricsPanel.Alignment)
+        {
+            WidgetWidthStrategyChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>
+    /// 歌词的宽度策略变了（对齐方式切换），需要宿主重新算一次尺寸。
+    ///
+    /// 与「内容宽度变了」是两件事：后者可以按阈值节流（差 4 DIP 以内不值得动窗口），
+    /// 前者必须无条件重排——宽度策略决定了 <c>CalculateSize</c> 走哪条分支。
+    /// </summary>
+    public event EventHandler? WidgetWidthStrategyChanged;
+
+    /// <summary>
+    /// 把设置里的十六进制字符串转成 <c>Color</c>。<c>null</c> = 跟随主题。
+    /// </summary>
+    private static Color? ResolveUserLyricsColor(string? hex)
+    {
+        var scheme = LyricsColorScheme.Parse(hex);
+        if (!scheme.IsExplicit)
+        {
+            return null;
+        }
+
+        var argb = scheme.Argb;
+        return Color.FromArgb(
+            (byte)((argb >> 24) & 0xFF),
+            (byte)((argb >> 16) & 0xFF),
+            (byte)((argb >> 8) & 0xFF),
+            (byte)(argb & 0xFF));
+    }
+
+    /// <summary>
+    /// 统一决定「标题区还是歌词区」显示哪个。
+    ///
+    /// 改动前这段逻辑分散在 SetVerticalMode / SetSmallTaskbarMode / UpdateUi
+    /// 三处，各自直接写 Visibility，加进歌词后必然互相覆盖。集中到一处，
+    /// 三处都改成调用它。
+    /// </summary>
+    private void UpdateTextRegionVisibility()
+    {
+        if (_isLyricsMode)
+        {
+            // 歌词模式下标题区一律隐藏——不管是显示歌词还是让位给频谱。
+            SongInfoStackPanel.Visibility = Visibility.Collapsed;
+            SongArtistContainer.Visibility = Visibility.Collapsed;
+
+            // 纯音乐态：歌词面板让位给频谱。频谱是独立控件，
+            // 由 TaskbarWindow.PositionVisualizer 定位，不在这里管。
+            LyricsPanel.SetActive(!LyricsPanel.IsPureMusic);
+            return;
+        }
+
+        LyricsPanel.SetActive(false);
+        SongInfoStackPanel.Visibility = _isVertical ? Visibility.Collapsed : Visibility.Visible;
+        SongArtistContainer.Visibility = !_isSmallTaskbar && !_isVertical && !string.IsNullOrEmpty(_actualArtist)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 切换歌词模式。
+    /// </summary>
+    /// <param name="enabled">是否启用歌词。</param>
+    /// <param name="metrics">
+    /// 歌词面板度量。传 null 表示沿用当前度量（若从未设置过则用默认值推导）。
+    /// </param>
+    public void SetLyricsMode(bool enabled, LyricsPanelMetrics? metrics = null)
+    {
+        if (_isLyricsMode == enabled && (metrics is null || !enabled))
+        {
+            return;
+        }
+
+        var wasLyricsMode = _isLyricsMode;
+        _isLyricsMode = enabled;
+
+        if (enabled)
+        {
+            LyricsPanel.ApplyMetrics(metrics ?? BuildLyricsMetrics());
+
+            // 只在「从关到开」的边沿订阅。
+            //
+            // 改动前这里无条件 `+=`，而 P4 的 ApplyLyricsSettings 会被
+            // 「窗口重建 / 设置变化 / 启动」反复调用——每次都传 enabled=true
+            // 且 metrics 为 null，恰好绕过上面那个短路。结果是同一个处理器
+            // 被挂 N 次，一次纯音乐态切换会跑 N 遍 UpdateTextRegionVisibility。
+            // 现在短路条件允许「已开启 + 无 metrics」通过（那是为了让
+            // 别的调用点刷新可见性），所以订阅必须自己判边沿。
+            if (!wasLyricsMode)
+            {
+                LyricsPanel.PureMusicChanged += OnLyricsPureMusicChanged;
+            }
+        }
+        else
+        {
+            LyricsPanel.PureMusicChanged -= OnLyricsPureMusicChanged;
+        }
+
+        UpdateTextRegionVisibility();
+
+        // 进歌词模式时把外观类设置刷一遍。
+        //
+        // 必须在 ApplyWindowsTheme 之后：那个方法会把主题色写进面板，
+        // 若顺序反了，用户设的自定义颜色会在下一次主题切换时被覆盖掉。
+        // 这里放在 SetLyricsMode 里而不是只在 RefreshLyricsAppearance 里，
+        // 是因为「刚开启歌词」这条路径不会经过设置变更钩子。
+        if (enabled)
+        {
+            RefreshLyricsAppearance();
+        }
+
+        // 进歌词模式时停掉标题滚动动画。隐藏的 TextBlock 上跑着
+        // RepeatBehavior.Forever 的动画仍然消耗渲染时钟，
+        // 而且切回来时动画状态是脏的。
+        if (enabled)
+        {
+            StopMarqueeAnimations();
+        }
+        else
+        {
+            UpdateMarquees();
+        }
+    }
+
+    /// <summary>
+    /// 纯音乐态变化。纯音乐没有歌词可显示，隐藏歌词面板，
+    /// 让频谱接管这块空间。
+    /// </summary>
+    /// <remarks>
+    /// 互斥规则（与实施计划的 P3-6 一致）：**歌词模式优先**，
+    /// 频谱只在纯音乐态作为降级显示。这样用户开了歌词就不会同时
+    /// 看到两套可视化在抢任务栏空间。
+    /// </remarks>
+    private void OnLyricsPureMusicChanged(object? sender, bool isPureMusic)
+    {
+        UpdateTextRegionVisibility();
+    }
+
+    /// <summary>歌词模式是否开启。</summary>
+    public bool IsLyricsMode => _isLyricsMode;
+
+    /// <summary>
+    /// 歌词模式下「完全不受任务栏空间约束时」想占的整块宽度，
+    /// 单位是 **DIP 视觉宽度**（与 <c>_nativeWidgetsPadding = 216</c> 同一坐标系）。
+    ///
+    /// 供 <c>TaskbarWindow</c> 做「两遍布局」的第一遍：先问要多大，
+    /// 再拿这个值去问任务栏「放得下吗、放哪」，最后用实际区间长度回压。
+    ///
+    /// **单位必须与 216 对齐**：`CalculateSize` 的 <c>maxLogicalWidth</c>
+    /// 是 `预算 / _scale`，而 <c>physicalWidth</c> 是
+    /// <c>logicalWidth * dpiScale * _scale</c>——也就是说 216 这个常量
+    /// 从来就是「DIP 视觉宽度」，在 150% DPI 下它仍占 216 DIP。
+    /// 若这里返回物理像素，非 100% DPI 时预算会凭空多出 dpiScale 倍。
+    ///
+    /// <b>竖向时返回值语义不同</b>：不是宽度而是**主轴长度**（屏幕纵向）。
+    /// 竖向任务栏宽度固定（通常 40–60 DIP），能协商的只有沿主轴占多长。
+    /// </summary>
+    public double MeasureDesiredWidth()
+    {
+        if (!_isLyricsMode)
+        {
+            return 0;
+        }
+
+        if (_isVertical)
+        {
+            // 竖向：一句歌词必然折成多行，需要的主轴长度 = 行数 × 行高。
+            // 估算逻辑在 Core 的 LyricsVerticalLayout 里（可单测）。
+            //
+            // **必须传两行内容**（MeasureVerticalContent），不能只传主行宽度：
+            // 当前行与翻译/下一行各自独立折行，只按主行估会漏掉次要行整块。
+            // 截图矩阵实测：双行状态按主行估 29.9 DIP、实际要 63.4 DIP，
+            // 次要行被 ClipToBounds 整行裁掉。
+            //
+            // 上限给 MaxLyricsWidgetLength：横向时它是 480 DIP 宽度，
+            // 竖向时同值作为「最多占主轴 480 DIP」——对 1080p 屏
+            //（主轴约 1040 DIP）不到一半，不会盖住任务栏中部的应用按钮。
+            var crossSize = _isSmallTaskbar
+                ? LyricsMetricsPolicy.SmallTaskbarCrossSize
+                : LyricsMetricsPolicy.DefaultTaskbarCrossSize;
+
+            var estimate = LyricsVerticalLayout.EstimateMainAxisLength(
+                content: LyricsPanel.MeasureVerticalContent(),
+                crossSize: crossSize,
+                maxLength: MaxLyricsWidgetLength);
+
+            // 用面板的**实测内容高度**兜住估算偏小的一侧。
+            //
+            // 估算是按宽度除法推的近似值，而实际折行由 TextBlock 的断行算法
+            // 决定：中文标点禁则会让实际行数比估算多一行。估算偏小的后果是
+            // 外层 Widget.Height 不够、最后一行被 ClipToBounds 整行裁掉，
+            // 而截图上看起来只是「字少了点」，很难发现。
+            //
+            // 只取较大者、不做双向对齐：估算偏大是宿主主动申请的占位，
+            // 缩回去会让任务栏留空白，且下一帧估算又撑起来，形成抖动。
+            var measured = LyricsPanel.VerticalContentHeight;
+            if (double.IsFinite(measured) && measured > estimate)
+            {
+                return Math.Min(measured, MaxLyricsWidgetLength);
+            }
+
+            return estimate;
+        }
+
+        var coverImageMargin = _isSmallTaskbar ? SmallCoverImageMargin : DefaultCoverImageMargin;
+        var contentWidth = LyricsPanel.DesiredContentWidth;
+
+        if (contentWidth <= 0)
+        {
+            // 首帧之前没有内容宽度，按最小可用宽度估。
+            // 报 0 会让避让算法认为「什么都不需要」，直接塞进最窄的缝里。
+            contentWidth = TaskbarFreeSpaceLayout.MinimumDisplayLength;
+        }
+
+        var logicalWidth = contentWidth + coverImageMargin + _extraMarginForText + MeasureControlsWidth();
+
+        return logicalWidth * _scale;
+    }
+
+    /// <summary>
+    /// 播放控制按钮占的逻辑宽度（DIP，未乘 <c>_scale</c>）。
+    ///
+    /// 单独拿出来是因为它在 <see cref="CalculateSize"/> 里是**加在宽度上限之后**的
+    /// （`logicalWidth += controlsWidth` 在 clamp 之后），所以上限必须先把
+    /// 这部分扣掉，否则整块占位会超出实测可用区间一个按钮组的宽度。
+    /// </summary>
+    private double MeasureControlsWidth()
+    {
+        if (!SettingsManager.Current.TaskbarWidgetControlsEnabled ||
+            ControlsStackPanel.Visibility != Visibility.Visible)
+        {
+            return 0;
+        }
+
+        var controlsWidth = PreviousButton.Width + PlayPauseButton.Width + NextButton.Width;
+        if (!_isVertical)
+        {
+            controlsWidth += ControlsStackPanel.Margin.Left + ControlsStackPanel.Margin.Right;
+        }
+
+        return controlsWidth;
+    }
+
+    /// <summary>
+    /// 按当前任务栏形态推导歌词度量。
+    ///
+    /// 决策本身在 Core 的 <see cref="LyricsMetricsPolicy"/> 里（可用 2×2 矩阵单测锁死），
+    /// 这里只负责把 WPF 侧的两个标志位传进去。
+    /// </summary>
+    private LyricsPanelMetrics BuildLyricsMetrics()
+    {
+        var settings = SettingsManager.Current;
+
+        return LyricsMetricsPolicy.Create(
+            isVertical: _isVertical,
+            isSmallTaskbar: _isSmallTaskbar,
+            preferredFontSize: settings.LyricsFontSize,
+            userSingleLine: settings.LyricsSingleLine);
+    }
+
+    /// <summary>
+    /// 更新一帧歌词。这是热路径（最多 30 次/秒），
+    /// 只改文本与扫描遮罩，<b>不触发重排、不做文本测量</b>。
+    /// </summary>
+    /// <remarks>
+    /// 宽度不在这里返回：<see cref="LyricsPanel.MeasureDesiredWidth"/>
+    /// 内部要构造 <c>FormattedText</c>，那是每帧几十微秒的固定开销，
+    /// 而宽度只在换行时才可能变。改由面板的
+    /// <c>DesiredWidthChanged</c> 事件推送（带 4 DIP 阈值）。
+    /// </remarks>
+    public void UpdateLyricsFrame(LyricDisplayFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+
+        if (!_isLyricsMode)
+        {
+            return;
+        }
+
+        // 纯音乐态下歌词面板是隐藏的，不必更新它的可视树——
+        // 但**必须**仍然调用 ApplyFrame：IsPureMusic 状态与
+        // PureMusicChanged 事件都从那里来，跳过就永远退不出纯音乐态。
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        LyricsPanel.ApplyFrame(frame);
+        stopwatch.Stop();
+
+        if (!LyricsPanel.IsShowing)
+        {
+            // 隐藏时不喂帧耗时：隐藏元素不渲染，量到的时间没有意义，
+            // 喂进去只会误触发降级。
+            return;
+        }
+
+        // 把本帧耗时喂给自适应降级器。连续多帧超预算会降档，
+        // 但不自动升回——避免在临界点抖动。
+        LyricsPanel.ReportFrameTime(stopwatch.Elapsed.TotalMilliseconds);
+    }
+
+    /// <summary>
+    /// 停掉两条标题滚动动画。歌词模式下调用，避免后台空转。
+    /// </summary>
+    private void StopMarqueeAnimations()
+    {
+        if (SongTitle.RenderTransform is TranslateTransform titleTransform)
+        {
+            titleTransform.BeginAnimation(TranslateTransform.XProperty, null);
+            titleTransform.X = 0;
+        }
+
+        if (SongArtist.RenderTransform is TranslateTransform artistTransform)
+        {
+            artistTransform.BeginAnimation(TranslateTransform.XProperty, null);
+            artistTransform.X = 0;
+        }
+
+        // 渐变遮罩上的颜色动画也要停，否则 OpacityMask 仍挂着动画时钟。
+        _cachedTitleOpacityMask?.GradientStops[0].BeginAnimation(GradientStop.ColorProperty, null);
+        _cachedTitleOpacityMask?.GradientStops[3].BeginAnimation(GradientStop.ColorProperty, null);
+        _cachedArtistOpacityMask?.GradientStops[0].BeginAnimation(GradientStop.ColorProperty, null);
+        _cachedArtistOpacityMask?.GradientStops[3].BeginAnimation(GradientStop.ColorProperty, null);
     }
 
     public void SetMainWindow(MainWindow mainWindow)
@@ -173,6 +642,11 @@ public partial class TaskbarWidgetControl : UserControl
         PreviousButton.Foreground = foreground;
         PlayPauseButton.Foreground = foreground;
         NextButton.Foreground = foreground;
+
+        // 歌词面板的配色必须跟系统主题走，不能用 App 主题——
+        // 任务栏是系统区域，用户把 App 设成浅色但系统深色时，
+        // 用 App 配色会出现浅底白字。
+        LyricsPanel.ApplyWindowsTheme(isDark);
     }
 
     private void Grid_MouseEnter(object sender, MouseEventArgs e)
@@ -267,7 +741,7 @@ public partial class TaskbarWidgetControl : UserControl
         e.Handled = true;
     }
 
-    public (double logicalWidth, double logicalHeight) CalculateSize(double dpiScale)
+    public (double logicalWidth, double logicalHeight) CalculateSize(double dpiScale, double? availableWidth = null)
     {
         double coverImageMargin = _isSmallTaskbar ? SmallCoverImageMargin : DefaultCoverImageMargin;
 
@@ -290,13 +764,66 @@ public partial class TaskbarWidgetControl : UserControl
             textChanged = true;
         }
 
-        // maximum width limit, same as Windows native widget
-        double maxLogicalWidth = _nativeWidgetsPadding / _scale;
+        // 宽度上限，单位是「布局 DIP」（即乘过 _scale 之前的那个数）。
+        //
+        // availableWidth 由 TaskbarWindow 通过 TaskbarFreeSpaceLayout.TryPlace
+        // 实测得出，传的是 **DIP 视觉宽度**（与 _nativeWidgetsPadding 同一坐标系）；
+        // 传 null 时退回原来的硬编码 216。
+        //
+        // 单位链条（改动前就存在，容易看错，写清楚）：
+        //   216 ── 视觉 DIP，恒为 216，不随 DPI 变
+        //   /_scale ── 布局 DIP，240
+        //   ×dpiScale×_scale ── 占屏物理像素
+        // 所以 216 从来不是「物理像素预算」。把 UIA 的物理坐标直接
+        // 当成预算传进来，150% DPI 下会凭空多出 1.5 倍宽度。
+        //
+        // 播放按钮组是**加在 clamp 之后**的（见下方 logicalWidth += controlsWidth），
+        // 所以实测预算必须先把按钮扣掉再当上限用，否则整块占位会
+        // 超出可用区间整整一个按钮组的宽度。传 null 时保持原有语义：
+        // 216 只是文本部分的预算，按钮另算——这是 FF 一直以来的行为，
+        // 不在本次改动里改。
+        double controlsWidth = MeasureControlsWidth();
+
+        // 竖向下不扣按钮宽度：竖向的预算方向是主轴（屏幕纵向），
+        // 而按钮组经反向旋转后是竖排的，占的也是主轴方向——但它的
+        // 高度由 TaskbarWindow 的 crossPos 居中处理，不在这个预算里。
+        // 扣掉会让可用主轴长度凭空少一个按钮组。
+        double budgetDeduction = _isVertical ? 0 : controlsWidth;
+
+        double maxLogicalWidth = availableWidth is { } budget
+            ? Math.Max((budget / _scale) - budgetDeduction, 0)
+            : _nativeWidgetsPadding / _scale;
+
         double logicalWidth;
 
-        if (_isVertical)
+        if (_isVertical && _isLyricsMode)
         {
+            // 竖向任务栏上的歌词。
+            //
+            // 坐标系有两层，容易绕进去，写清楚：
+            //   1. TaskbarWindow.PositionWidget 给整个控件挂 LayoutTransform(+90)，
+            //      所以控件的「逻辑宽度」在屏幕上表现为**纵向延伸**（主轴长度），
+            //      「逻辑高度」表现为**横向宽度**（任务栏宽度）。
+            //   2. LyricsPanel 内部再挂一个 LayoutTransform(-90) 把旋转抵消掉，
+            //      让字形正立（见 LyricsPanel.SetVerticalMode 的探针数据）。
+            //
+            // 所以这里的 logicalWidth 要的是「沿主轴占多长」，而
+            // maxLogicalWidth 正是 TaskbarWindow 传下来的主轴预算
+            // （竖向时它算的是任务栏高度方向的可用区间），直接用。
+            //
+            // 不扣 controlsWidth：播放按钮组在竖向时被反向旋转成竖排，
+            // 占的是主轴方向的一小段，已经由 MeasureDesiredWidth 的
+            // 折行估算隐含包含在内容里；再扣一次会让可用长度凭空少一截。
+            logicalWidth = maxLogicalWidth;
+        }
+        else if (_isVertical)
+        {
+            // 竖向 + 标题模式：FF 原有行为，竖向不显示文字，只要封面宽度。
             logicalWidth = coverImageMargin;
+        }
+        else if (_isLyricsMode)
+        {
+            logicalWidth = CalculateLyricsWidth(coverImageMargin, maxLogicalWidth);
         }
         else if (SettingsManager.Current.TaskbarWidgetFixedWidth)
         {
@@ -328,29 +855,115 @@ public partial class TaskbarWidgetControl : UserControl
             widthChanged = true;
         }
 
+        // 歌词模式下容器宽度同时决定歌词视口宽度，必须一起更新，
+        // 否则长句滚动会按旧的视口宽度算，滚出边界。
+        //
+        // 竖向时不设：竖向下 LyricsPanel 的宽度由「任务栏宽度」决定，
+        // 与这里的 logicalWidth（主轴长度）不是同一个量。竖向下
+        // logicalWidth 对应屏幕纵向延伸，写进 LyricsPanel.Width 会让面板
+        // 变成一条极长的横条，换行完全失效。竖向的折行宽度由
+        // LyricsPanel.UpdateVerticalWrapLayout 从面板自身的实际宽度取。
+        if (_isLyricsMode && !_isVertical && widthChanged)
+        {
+            LyricsPanel.Width = newTitleContainerWidth;
+        }
+
         // Refresh animations if layout bounds or text contents change
         if (textChanged || widthChanged)
         {
             UpdateMarquees();
         }
 
-        // add space for playback controls if enabled and visible
-        if (SettingsManager.Current.TaskbarWidgetControlsEnabled && ControlsStackPanel.Visibility == Visibility.Visible)
+        // 播放按钮组占的空间。竖向下**不加**：竖向的 logicalWidth 是主轴长度
+        // （屏幕纵向），按钮组经反向旋转后是竖排的，占的是同一个方向，
+        // 但它的高度已经由 TaskbarWindow 的 crossPos 居中处理，
+        // 在这里加会让整块占位沿主轴多出一截空白。
+        if (controlsWidth > 0 && !_isVertical)
         {
-            double controlsWidth = PreviousButton.Width + PlayPauseButton.Width + NextButton.Width;
-            if (!_isVertical)
-                controlsWidth += ControlsStackPanel.Margin.Left + ControlsStackPanel.Margin.Right;
-
             logicalWidth += controlsWidth;
         }
 
+        // 竖向时 logicalHeight 是屏幕上的**横向宽度**，也就是任务栏宽度——
+        // TaskbarWindow 会把它写成 Widget.Height（physicalHeight / dpiScale）。
+        //
+        // 这里仍然返回 40 / 28（任务栏短边的标准值）：TaskbarWindow 的
+        // crossPos 计算是 `(crossSize - physicalHeight) / 2`，若两边取同一来源
+        // （都来自 SettingsManager 的短边判定），居中的结果才稳定。
+        // 真正的折行宽度由 LyricsPanel.UpdateVerticalWrapLayout 从
+        // 面板自身的实际宽度取，不依赖这个返回值。
         double logicalHeight = _isSmallTaskbar ? SmallTaskbarWidgetHeight : DefaultTaskbarWidgetHeight;
 
         return (logicalWidth, logicalHeight);
     }
 
+    /// <summary>
+    /// 歌词模式下的宽度。
+    ///
+    /// 与标题模式的差别：标题是「内容多宽就多宽」，歌词需要
+    /// **留出滚动余量**——一句长歌词如果刚好卡在视口宽度上，
+    /// 每次换行都会因为多一两个像素触发重排。余量来自
+    /// <c>_extraMarginForText</c>（6 DIP）：它只进 <c>logicalWidth</c>、
+    /// 不进 <c>contentWidth</c>，所以最终的视口宽度
+    /// （<c>logicalWidth - coverImageMargin</c>）比文本宽 6 DIP。
+    /// </summary>
+    private double CalculateLyricsWidth(double coverImageMargin, double maxLogicalWidth)
+    {
+        // 居中和右对齐需要「富余宽度」才有意义。
+        //
+        // 左对齐（默认）时小组件宽度按内容收缩，这是 FF 一贯的行为：
+        // 短句就该占得少，不然任务栏上白占一块。但居中/右对齐下，
+        // 如果宽度也收缩到内容宽度，富余恒为 0，三种对齐的渲染结果
+        // 完全相同——用户会以为设置没生效。
+        //
+        // 所以非左对齐时直接吃满可用预算。代价是短句旁边会留白，
+        // 但那正是用户选居中的目的（在固定区域里居中显示）。
+        if (GetEffectiveLyricsAlignment() != LyricsTextAlignment.Left)
+        {
+            return maxLogicalWidth;
+        }
+
+        var contentWidth = LyricsPanel.DesiredContentWidth;
+
+        if (contentWidth <= 0)
+        {
+            // 还没收到帧（刚切到歌词模式），先给一个中等宽度，
+            // 避免先渲染成 0 宽再跳变。
+            contentWidth = maxLogicalWidth * 0.5;
+        }
+
+        var logicalWidth = contentWidth + coverImageMargin + _extraMarginForText;
+
+        // 歌词同样受任务栏可用区间约束，只缩不放。
+        return Math.Min(logicalWidth, maxLogicalWidth);
+    }
+
+    /// <summary>
+    /// 当前生效的歌词对齐方式。
+    ///
+    /// 竖向时强制左对齐：竖向的文本宽度被钉成视口宽度（换行需要有限约束），
+    /// 对齐由 <c>TextAlignment</c> 负责，而竖向任务栏的宽度只有 40–60 DIP，
+    /// 一行往往刚好占满，居中与右对齐在视觉上与左对齐没有区别。
+    /// 强行让竖向也撑满预算会把宽度算错（竖向的 maxLogicalWidth 是主轴长度）。
+    /// </summary>
+    private LyricsTextAlignment GetEffectiveLyricsAlignment()
+    {
+        if (_isVertical)
+        {
+            return LyricsTextAlignment.Left;
+        }
+
+        return LyricsAlignmentPolicy.FromSetting(SettingsManager.Current.LyricsAlignment);
+    }
+
     public void UpdateMarquees()
     {
+        // 歌词模式下标题区是隐藏的，别再驱动它的滚动动画：
+        // 隐藏元素上的 Forever 动画仍占渲染时钟，切回来时状态也是脏的。
+        if (_isLyricsMode)
+        {
+            return;
+        }
+
         double titleAvailableWidth = double.IsNaN(SongTitleContainer.Width) ? 0 : SongTitleContainer.Width;
         double artistAvailableWidth = double.IsNaN(SongArtistContainer.Width) ? 0 : SongArtistContainer.Width;
 
@@ -634,10 +1247,11 @@ public partial class TaskbarWidgetControl : UserControl
             }
 
             SongTitle.Visibility = Visibility.Visible;
-            SongArtistContainer.Visibility = !_isSmallTaskbar && !_isVertical && !string.IsNullOrEmpty(_actualArtist)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-            SongInfoStackPanel.Visibility = _isVertical ? Visibility.Collapsed : Visibility.Visible;
+
+            // 标题区 / 歌词区的可见性统一由 UpdateTextRegionVisibility 决定，
+            // 这里不再直接写 SongArtistContainer / SongInfoStackPanel。
+            UpdateTextRegionVisibility();
+
             BackgroundImage.Visibility = SettingsManager.Current.TaskbarWidgetBackgroundBlur ? Visibility.Visible : Visibility.Collapsed;
 
             // on top of XAML visibility binding (XAML binding only hides when disabled in settings)

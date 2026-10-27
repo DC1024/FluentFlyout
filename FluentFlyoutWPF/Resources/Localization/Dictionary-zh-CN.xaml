@@ -137,6 +137,7 @@
     <system:String x:Key="TaskbarWidgetAnimatedDescription">为小组件启用细节动画</system:String>
     <system:String x:Key="SelectedMonitorTitle">浮窗目标显示器</system:String>
     <system:String x:Key="TrayIcon_ViewLogsOption">查看日志</system:String>
+    <system:String x:Key="TrayIcon_LyricsOffsetOption">调整当前歌曲歌词偏移</system:String>
     <system:String x:Key="TaskbarWidgetSelectedMonitorTitle">小组件目标显示器</system:String>
     <system:String x:Key="TaskbarWidgetPaddingSettingsTitle">小组件间距设置</system:String>
     <system:String x:Key="TaskbarWidgetPaddingSettingsDescription">调整小组件与周围元素的间距来搭配你的任务栏风格</system:String>
@@ -301,4 +302,31 @@
     <system:String x:Key="RelatedSettingsTitle">相关设置</system:String>
     <system:String x:Key="VolumeFlyoutShortcutTitle">键盘快捷键</system:String>
     <system:String x:Key="VolumeFlyoutShortcutDescription">按下快捷键以显示音量浮窗</system:String>
+
+    <!-- 歌词 -->
+    <system:String x:Key="LyricsTitle">歌词</system:String>
+    <system:String x:Key="LyricsDescription">在任务栏小组件里显示当前播放歌曲的同步歌词，支持逐字高亮、翻译行与竖向任务栏换行排版。</system:String>
+    <system:String x:Key="LyricsRequiresWidgetWarning">歌词显示在任务栏小组件上，请先在上面的「任务栏小组件」里启用它。</system:String>
+    <system:String x:Key="LyricsEnabledTitle">在任务栏显示歌词</system:String>
+    <system:String x:Key="LyricsEnabledDescription">用歌词替换小组件里的歌曲标题与艺术家，与频谱可视化互斥</system:String>
+    <system:String x:Key="LyricsFontSizeTitle">歌词字号</system:String>
+    <system:String x:Key="LyricsFontSizeDescription">单位为像素。任务栏高度不够时会自动缩小</system:String>
+    <system:String x:Key="LyricsShowTranslationTitle">显示翻译行</system:String>
+    <system:String x:Key="LyricsShowTranslationDescription">有翻译时第二行显示翻译，没有时显示下一句预告</system:String>
+    <system:String x:Key="LyricsWordScanTitle">逐字高亮</system:String>
+    <system:String x:Key="LyricsWordScanDescription">当前句按演唱进度逐字点亮。关掉可降低 CPU 占用</system:String>
+    <system:String x:Key="LyricsSingleLineTitle">强制单行</system:String>
+    <system:String x:Key="LyricsSingleLineDescription">只显示当前句，不显示翻译与下一句。关闭时由系统按任务栏高度自动决定</system:String>
+    <system:String x:Key="LyricsColorTitle">歌词颜色</system:String>
+    <system:String x:Key="LyricsColorDescription">留空则跟随系统主题。支持 #RRGGBB、#AARRGGBB 或 #RGB</system:String>
+    <system:String x:Key="LyricsColorPlaceholder">跟随系统主题</system:String>
+    <system:String x:Key="LyricsAlignmentTitle">文本对齐</system:String>
+    <system:String x:Key="LyricsAlignmentDescription">短句在可用宽度内的水平位置。长句需要滚动时一律从左侧开始</system:String>
+    <system:String x:Key="LyricsAlignmentLeft">左对齐</system:String>
+    <system:String x:Key="LyricsAlignmentCenter">居中</system:String>
+    <system:String x:Key="LyricsAlignmentRight">右对齐</system:String>
+    <system:String x:Key="LyricsOffsetTitle">当前歌曲偏移</system:String>
+    <system:String x:Key="LyricsOffsetDescription">正值让歌词提前，负值延后，单位毫秒。按歌曲单独保存</system:String>
+    <system:String x:Key="LyricsVerticalTaskbarNote">竖向任务栏上歌词会自动换行铺满整条任务栏，不会压成单行。</system:String>
+    <system:String x:Key="LyricsSourceNote">歌词来自 QQ 音乐、酷狗、网易云与 LRCLIB。首次播放某首歌时需要联网检索，之后会缓存到本地。</system:String>
 </ResourceDictionary>

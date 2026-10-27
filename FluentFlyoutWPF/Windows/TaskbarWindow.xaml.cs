@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 using FluentFlyout.Classes.Settings;
+using FluentFlyout.Controls;
+using FluentFlyout.Lyrics.Layout;
 using FluentFlyoutWPF;
 using FluentFlyoutWPF.Classes;
 using FluentFlyoutWPF.Classes.Utils;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
@@ -30,6 +33,43 @@ public partial class TaskbarWindow : Window
     private readonly DispatcherTimer _timer;
     private readonly int _nativeWidgetsPadding = 216;
     private readonly double _scale = 0.9;
+
+    /// <summary>
+    /// 歌词小组件的上限（DIP 视觉长度）。
+    ///
+    /// 横向时是宽度上限；竖向时是**主轴长度**上限。
+    /// 实际定义在 <see cref="TaskbarWidgetControl.MaxLyricsWidgetLength"/>——
+    /// 因为 <c>TaskbarWidgetControl.MeasureDesiredWidth</c> 也要用它做上限，
+    /// 两处必须同一个值，所以只在控件里定义一份。
+    /// </summary>
+    private const double MaxLyricsWidgetWidth = TaskbarWidgetControl.MaxLyricsWidgetLength;
+
+    /// <summary>
+    /// 任务栏占用区间的缓存有效期。
+    ///
+    /// <c>GetTaskbarXamlElementRect</c> 走的是跨进程 UIA 查询，单次最多等
+    /// 1000ms（找元素）+ 500ms（取矩形）。<c>UpdatePosition</c> 由 1.5s 定时器
+    /// 和每次换歌触发，再叠加歌词换行就是高频路径——必须缓存。
+    /// 500ms 与 TaskbarLyrics 的 <c>RefreshInterval</c> 一致。
+    /// </summary>
+    private static readonly TimeSpan OccupiedCacheLifetime = TimeSpan.FromMilliseconds(500);
+
+    private TaskbarOccupancySnapshot? _occupiedSnapshot;
+
+    /// <summary>
+    /// 一次任务栏占用区间的快照（物理像素，主轴坐标）。
+    /// </summary>
+    /// <remarks>
+    /// 带 <see cref="TaskbarHandle"/> 与 <see cref="TaskbarRect"/> 是为了在
+    /// 换屏、任务栏尺寸变化、Explorer 重启后**自动失效**——
+    /// 这三种情况下旧的物理坐标毫无意义，而调用方不需要记得主动清缓存。
+    /// </remarks>
+    private readonly record struct TaskbarOccupancySnapshot(
+        IntPtr TaskbarHandle,
+        RECT TaskbarRect,
+        bool IsVertical,
+        IReadOnlyList<TaskbarInterval> Occupied,
+        long Timestamp);
 
     private IntPtr _trayHandle;
     private AutomationElement? _widgetElement;
@@ -121,6 +161,24 @@ public partial class TaskbarWindow : Window
         SetupWindow();
         _mainWindow = (MainWindow)Application.Current.MainWindow;
         Widget.SetMainWindow(_mainWindow);
+
+        // 窗口重建（Explorer 重启 / 换屏 / 改设置）后必须重新把歌词态推回去：
+        // 新建的 Widget 是全新实例，IsLyricsMode 默认 false，
+        // 不推的话用户会看到「歌词设置是开的，但任务栏只剩标题」。
+        //
+        // **不能走 _mainWindow.ApplyLyricsSettings()**：本窗口的 Show() 在
+        // 构造函数最后一行，Loaded 会在构造函数返回**之前**同步触发，
+        // 那一刻 MainWindow.taskbarWindow 还是旧值（或被置成了 null），
+        // 于是 ApplyLyricsSettings 里的 `taskbarWindow?.Widget` 拿到 null 直接返回。
+        // 这里直接对**自己**的 Widget 操作，不依赖那个字段的赋值时机。
+        var active = _mainWindow.ApplyLyricsSettingsTo(Widget);
+        _mainWindow.UpdateLyricsTrayMenu(active);
+
+        // 对齐方式切换会改变歌词的宽度策略（非左对齐时撑满可用预算），
+        // 必须无条件重排一次。不能靠 1.5s 的定时器兜底：那期间用户
+        // 已经把「居中」点下去了，看到的却还是左对齐，会以为设置没生效。
+        Widget.WidgetWidthStrategyChanged += (_, _) =>
+            Dispatcher.BeginInvoke(() => UpdatePosition(), DispatcherPriority.Background);
     }
 
     private IntPtr GetSelectedTaskbarHandle(out bool isMainTaskbarSelected)
@@ -460,14 +518,18 @@ on_error:
 
         Widget.SetVerticalMode(isVertical);
 
+        int taskbarHeight = taskbarRect.Bottom - taskbarRect.Top;
+        int taskbarWidth = taskbarRect.Right - taskbarRect.Left;
+
+        // 先按「理想宽度」算一遍，再去实测任务栏可用区间，
+        // 用区间长度作为上限重算。见 ComputeWidgetBudget。
+        var budget = ComputeWidgetBudget(taskbarHandle, taskbarRect, dpiScale, isVertical);
+
         // Calculate widget size
-        var (logicalWidth, logicalHeight) = Widget.CalculateSize(dpiScale);
+        var (logicalWidth, logicalHeight) = Widget.CalculateSize(dpiScale, budget);
 
         int physicalWidth = (int)(logicalWidth * dpiScale * _scale);
         int physicalHeight = (int)(logicalHeight * dpiScale);
-
-        int taskbarHeight = taskbarRect.Bottom - taskbarRect.Top;
-        int taskbarWidth = taskbarRect.Right - taskbarRect.Left;
 
         // Apply orientation transform
         Widget.LayoutTransform = isVertical ? new System.Windows.Media.RotateTransform(90) : null;
@@ -645,6 +707,291 @@ on_error:
         double rectW = isVertical ? physicalHeight : physicalWidth;
         double rectH = isVertical ? physicalWidth : physicalHeight;
         return new Rect(Canvas.GetLeft(Widget) * dpiScale, Canvas.GetTop(Widget) * dpiScale, rectW, rectH);
+    }
+
+    /// <summary>
+    /// 算出小组件这块占位「最多能用多宽」，单位是 **DIP 视觉宽度**
+    /// （与 <c>_nativeWidgetsPadding = 216</c> 同一坐标系）。
+    ///
+    /// 这是 P3-8/P3-9 的核心：把「与原生小组件等宽」这个硬编码常量，
+    /// 换成「先问自己要多大，再问任务栏给不给」的两遍流程。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 为什么是两遍：区间依赖宽度（要放多宽才知道能塞进哪个缝），
+    /// 宽度又依赖区间（能塞多宽才知道放多大）。这个环不能靠迭代解，
+    /// 因为第二遍只会把宽度**改小**——一旦变小，原来找到的缝只会更宽松，
+    /// 不需要重新求位置。所以一遍「理想宽度 → 求缝」，一遍「缝长 → 压宽度」即可。
+    /// </para>
+    /// <para>
+    /// 三种情况刻意分开处理，避免「为了新功能牺牲老行为」：
+    /// </para>
+    /// <list type="bullet">
+    /// <item>非歌词模式：直接返回 <c>null</c>，<c>CalculateSize</c> 走原来的 216 常量，
+    /// 行为与改动前逐像素一致。</item>
+    /// <item>歌词模式但拿不到占用区间（UIA 失败 / 托盘元素不存在）：返回
+    /// <see cref="MaxLyricsWidgetWidth"/>，比 216 宽但仍是个有界值。</item>
+    /// <item>歌词模式且拿到区间：返回实测可用长度，且**不超过**理想宽度。</item>
+    /// </list>
+    /// <para>
+    /// <b>单位换算点只有一处</b>：交给 <see cref="TaskbarWidthBudget.Resolve"/> 前乘
+    /// <c>dpiScale</c> 换成物理像素，出来后除回去。这个函数之外的所有宽度
+    /// 都是 DIP 视觉宽度——包括 <see cref="MaxLyricsWidgetWidth"/>。
+    /// 所有降级判定与算术都在 <see cref="TaskbarWidthBudget"/> 里，
+    /// 这里只负责取数，便于单测覆盖。
+    /// </para>
+    /// </remarks>
+    /// <returns>DIP 视觉宽度上限；<c>null</c> 表示「不参与避让，用原有常量」。</returns>
+    private double? ComputeWidgetBudget(IntPtr taskbarHandle, RECT taskbarRect, double dpiScale, bool isVertical)
+    {
+        if (!Widget.IsLyricsMode || !double.IsFinite(dpiScale) || dpiScale <= 0)
+        {
+            return null;
+        }
+
+        var desiredDip = Math.Min(Widget.MeasureDesiredWidth(), MaxLyricsWidgetWidth);
+
+        // 任务栏主轴长度，换算到「相对任务栏左上角的物理像素」，
+        // 与 UIA 返回的矩形同一坐标系。
+        var taskbarLength = isVertical
+            ? taskbarRect.Bottom - taskbarRect.Top
+            : taskbarRect.Right - taskbarRect.Left;
+
+        if (taskbarLength <= 0 || !double.IsFinite(desiredDip) || desiredDip <= 0)
+        {
+            return MaxLyricsWidgetWidth;
+        }
+
+        var occupied = GetOccupiedIntervals(taskbarHandle, taskbarRect, isVertical);
+
+        // 进避让算法前统一换成物理像素：UIA 与 GetWindowRect 都是物理坐标，
+        // 而 desiredDip / MaxLyricsWidgetWidth 是 DIP 视觉宽度。
+        // 这个换算是本函数唯一的单位边界，进出各一次。
+        var budget = TaskbarWidthBudget.Resolve(
+            desiredWidth: desiredDip * dpiScale,
+            fallbackWidth: MaxLyricsWidgetWidth * dpiScale,
+            taskbarLength: taskbarLength,
+            preferredStart: ResolvePreferredStart(taskbarLength, isVertical),
+            occupied: occupied);
+
+        switch (budget.Outcome)
+        {
+            case WidthBudgetOutcome.NoUsableGap:
+                Logger.Debug(
+                    "Lyrics widget has no usable taskbar gap (length={0}, desired={1}px); falling back to constant width.",
+                    taskbarLength, desiredDip * dpiScale);
+                break;
+
+            case WidthBudgetOutcome.OccupancyUnknown:
+                Logger.Debug(
+                    "Taskbar occupancy unknown; lyrics widget falls back to bounded width {0} DIP.",
+                    MaxLyricsWidgetWidth);
+                break;
+        }
+
+        // 换回 DIP 视觉宽度。budget.Width 是物理像素，而 CalculateSize 的预算
+        // 是「乘过 _scale 的视觉宽度」，所以只除 dpiScale，不除 _scale。
+        return budget.Width / dpiScale;
+    }
+
+    /// <summary>
+    /// 期望起点，用来在多个空隙里挑「最符合用户设置的那个」。
+    ///
+    /// <see cref="TaskbarFreeSpaceLayout.TryPlace"/> 用哨兵值表达「越靠前越好」
+    /// 和「越靠后越好」，正好对应 <c>TaskbarWidgetPosition</c> 的 0 和 2；
+    /// 居中则给真实中点。
+    /// </summary>
+    private static double ResolvePreferredStart(double taskbarLength, bool isVertical)
+    {
+        // 竖向任务栏目前不支持歌词（见 LyricsPanel.SupportsVerticalTaskbar），
+        // 这里保留 isVertical 是为了将来接上时不必改签名。
+        _ = isVertical;
+
+        return SettingsManager.Current.TaskbarWidgetPosition switch
+        {
+            0 => -1,                      // near start：越靠前越好
+            2 => taskbarLength + 1,       // near end：越靠后越好
+            _ => taskbarLength / 2,       // center
+        };
+    }
+
+    /// <summary>
+    /// 取任务栏上已被占用的区间（主轴坐标，相对任务栏左上角的物理像素）。
+    ///
+    /// 返回 <c>null</c> 表示「不知道」——与「知道且为空」是两回事，
+    /// 调用方必须区别对待，否则一次 UIA 超时就会让歌词盖住托盘。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 只取三块：Widgets 按钮、系统托盘、以及频谱可视化（它也是我们画的，
+    /// 但位置独立计算，必须互相避让）。任务栏上的应用按钮不取——
+    /// 那是用户正在用的东西，UIA 逐个枚举几十个按钮的代价远超收益，
+    /// 而 <see cref="TaskbarFreeSpaceLayout"/> 的 <c>safetyGap</c> 已经
+    /// 保证不会贴到相邻元素上。
+    /// </para>
+    /// <para>
+    /// 缓存 500ms。这三块位置的查询全部走跨进程 UIA，单次最坏 1.5s；
+    /// <c>UpdatePosition</c> 由 1.5s 定时器 + 每次换歌 + 歌词换行触发，
+    /// 不缓存会直接把任务栏拖死（见落点文档 3.1 节）。
+    /// </para>
+    /// </remarks>
+    private IReadOnlyList<TaskbarInterval>? GetOccupiedIntervals(IntPtr taskbarHandle, RECT taskbarRect, bool isVertical)
+    {
+        var now = Stopwatch.GetTimestamp();
+
+        if (_occupiedSnapshot is { } cached &&
+            cached.TaskbarHandle == taskbarHandle &&
+            cached.IsVertical == isVertical &&
+            cached.TaskbarRect.Left == taskbarRect.Left &&
+            cached.TaskbarRect.Top == taskbarRect.Top &&
+            cached.TaskbarRect.Right == taskbarRect.Right &&
+            cached.TaskbarRect.Bottom == taskbarRect.Bottom &&
+            Stopwatch.GetElapsedTime(cached.Timestamp, now) < OccupiedCacheLifetime)
+        {
+            return cached.Occupied;
+        }
+
+        var occupied = new List<TaskbarInterval>(3);
+        var anyQuerySucceeded = false;
+
+        // Widgets 按钮
+        if (TryGetOccupiedInterval(() => GetTaskbarWidgetRect(taskbarHandle), taskbarRect, isVertical, out var widgetInterval))
+        {
+            occupied.Add(widgetInterval);
+            anyQuerySucceeded = true;
+        }
+
+        // 系统托盘
+        if (TryGetOccupiedInterval(() => GetSystemTrayRect(taskbarHandle), taskbarRect, isVertical, out var trayInterval))
+        {
+            occupied.Add(trayInterval);
+            anyQuerySucceeded = true;
+        }
+
+        // 频谱可视化：位置由 PositionVisualizer 决定，但那一刻的坐标要等
+        // 本次 UpdatePosition 走完才有。用上一帧的 Canvas 位置换算，
+        // 首次调用时 Canvas 尚未设置，跳过即可。
+        if (SettingsManager.Current.TaskbarVisualizerEnabled &&
+            TryGetVisualizerInterval(taskbarRect, isVertical, out var visualizerInterval))
+        {
+            occupied.Add(visualizerInterval);
+        }
+
+        if (!anyQuerySucceeded)
+        {
+            // 两块 UIA 查询全失败：视为「不知道」。注意**不写缓存**——
+            // 下一次调用立刻重试，而不是把「未知」缓存 500ms。
+            _occupiedSnapshot = null;
+            return null;
+        }
+
+        _occupiedSnapshot = new TaskbarOccupancySnapshot(
+            taskbarHandle, taskbarRect, isVertical, occupied, now);
+
+        return occupied;
+    }
+
+    /// <summary>
+    /// 把一次 UIA 元素查询结果转成主轴区间。
+    ///
+    /// 元素可能落在任务栏外（副屏任务栏上的托盘有时报出主屏坐标），
+    /// 这种情况按「查询失败」处理而不是塞一个越界区间进去——
+    /// <see cref="TaskbarFreeSpaceLayout"/> 会裁掉越界部分，
+    /// 但裁剩的碎片会让空隙判断变得莫名其妙。
+    /// </summary>
+    private static bool TryGetOccupiedInterval(
+        Func<(bool found, Rect rect)> query,
+        RECT taskbarRect,
+        bool isVertical,
+        out TaskbarInterval interval)
+    {
+        interval = default;
+
+        try
+        {
+            var (found, rect) = query();
+            if (!found || rect.IsEmpty || rect.Width <= 0 || rect.Height <= 0)
+            {
+                return false;
+            }
+
+            if (isVertical)
+            {
+                var start = rect.Top - taskbarRect.Top;
+                var end = rect.Bottom - taskbarRect.Top;
+                if (end <= 0 || start >= taskbarRect.Bottom - taskbarRect.Top)
+                {
+                    return false;
+                }
+
+                interval = new TaskbarInterval(start, end);
+            }
+            else
+            {
+                var start = rect.Left - taskbarRect.Left;
+                var end = rect.Right - taskbarRect.Left;
+                if (end <= 0 || start >= taskbarRect.Right - taskbarRect.Left)
+                {
+                    return false;
+                }
+
+                interval = new TaskbarInterval(start, end);
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            // 这里不记 Warn：UIA 在任务栏刷新期间失败是常态，
+            // 每 500ms 一条 Warn 会把日志刷满。
+            Logger.Debug(ex, "Failed to query taskbar element bounds for occupancy.");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 频谱可视化当前占的主轴区间。
+    ///
+    /// 位置读 Canvas 上的逻辑坐标（DIP）再乘 DPI 换回物理像素，
+    /// 与 <see cref="PositionVisualizer"/> 写进去的值同一来源。
+    /// </summary>
+    private bool TryGetVisualizerInterval(RECT taskbarRect, bool isVertical, out TaskbarInterval interval)
+    {
+        interval = default;
+
+        var primaryStart = isVertical ? Canvas.GetTop(TaskbarVisualizer) : Canvas.GetLeft(TaskbarVisualizer);
+        if (!double.IsFinite(primaryStart) || primaryStart <= 0)
+        {
+            return false;
+        }
+
+        var dpiScale = GetDpiForWindow(_lastTaskbarHandle) / 96.0;
+        if (dpiScale <= 0)
+        {
+            return false;
+        }
+
+        // 竖向任务栏下频谱被旋转 90°，主轴方向的实际长度是它的 Height。
+        var primaryLength = isVertical ? TaskbarVisualizer.Height : TaskbarVisualizer.Width;
+        if (!double.IsFinite(primaryLength) || primaryLength <= 0)
+        {
+            return false;
+        }
+
+        var start = primaryStart * dpiScale;
+        var end = start + (primaryLength * dpiScale);
+
+        var taskbarLength = isVertical
+            ? taskbarRect.Bottom - taskbarRect.Top
+            : taskbarRect.Right - taskbarRect.Left;
+
+        if (end <= 0 || start >= taskbarLength)
+        {
+            return false;
+        }
+
+        interval = new TaskbarInterval(start, end);
+        return true;
     }
 
     private Rect PositionVisualizer(IntPtr taskbarHandle, RECT taskbarRect, double dpiScale, bool isMainTaskbarSelected, bool isVertical)
