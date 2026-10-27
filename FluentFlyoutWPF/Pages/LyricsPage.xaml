@@ -143,8 +143,13 @@
                 </StackPanel>
             </ui:CardControl>
 
-            <!-- 对齐：0/1/2 直接对应 SelectedIndex，不需要值转换器。 -->
-            <ui:CardControl x:Name="LyricsAlignmentCard" Tag="Indexable" Grid.Row="8" Icon="{ui:SymbolIcon AlignCenter24}" Margin="0,0,0,3">
+            <!-- 对齐：0/1/2 直接对应 SelectedIndex，不需要值转换器。
+                 图标用 TextAlignCenter24 而不是 AlignCenter24——后者在
+                 WPF-UI 4.4.2 的 SymbolRegular（9235 个符号）里不存在，
+                 XAML 解析期会抛 FormatException 直接打崩宿主。
+                 同理检查过：AlignLeft24 / AlignCenterHorizontal24 存在，
+                 但 AlignCenter24 / TextCenter24 都不存在。 -->
+            <ui:CardControl x:Name="LyricsAlignmentCard" Tag="Indexable" Grid.Row="8" Icon="{ui:SymbolIcon TextAlignCenter24}" Margin="0,0,0,3">
                 <ui:CardControl.Header>
                     <StackPanel Orientation="Vertical">
                         <TextBlock Text="{DynamicResource LyricsAlignmentTitle}" FontSize="14" FontWeight="Regular" VerticalAlignment="Center" />
