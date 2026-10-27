@@ -201,7 +201,10 @@ Console.WriteLine($"总计: {pass}/{results.Count} 通过");
 
 var json = System.Text.Json.JsonSerializer.Serialize(results.Select(r => new
 {
-    id = r.Id, name = r.Name, pass = r.Pass, detail = r.Detail
+    id = r.Id,
+    name = r.Name,
+    pass = r.Pass,
+    detail = r.Detail
 }), new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "results.json"), json);
 
