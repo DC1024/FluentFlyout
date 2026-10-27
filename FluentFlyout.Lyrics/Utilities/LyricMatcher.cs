@@ -9,10 +9,10 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using F23.StringSimilarity;
-using TaskbarLyrics.Core.Models;
-using TaskbarLyrics.Core.Services;
+using FluentFlyout.Lyrics.Models;
+using FluentFlyout.Lyrics.Services;
 
-namespace TaskbarLyrics.Core.Utilities;
+namespace FluentFlyout.Lyrics.Utilities;
 
 public static class LyricMatcher
 {

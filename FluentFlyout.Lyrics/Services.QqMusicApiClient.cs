@@ -9,7 +9,7 @@ using System.Globalization;
 using System.Net.Http;
 using System.Text;
 
-namespace TaskbarLyrics.Core.Services;
+namespace FluentFlyout.Lyrics.Services;
 
 /// <summary>
 /// QQ 音乐歌词通道的 HTTP 边界：只负责发请求、取响应文本，不做任何解析。

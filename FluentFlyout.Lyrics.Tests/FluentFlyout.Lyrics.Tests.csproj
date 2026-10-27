@@ -8,17 +8,15 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <!--
-      程序集名必须保持 TaskbarLyrics.Core.Tests：
-      FluentFlyout.Lyrics/AssemblyInfo.cs 里的 InternalsVisibleTo 指向这个名字，
-      改名会导致所有 internal 类型在测试中不可见。
-      等 P1-2 重命名命名空间时，两边一起改。
+      程序集名与 FluentFlyout.Lyrics/AssemblyInfo.cs 里的 InternalsVisibleTo 严格对应，
+      两边必须一起改，否则所有 internal 类型在测试中会变成不可见。
     -->
-    <AssemblyName>TaskbarLyrics.Core.Tests</AssemblyName>
-    <RootNamespace>TaskbarLyrics.Core.Tests</RootNamespace>
+    <AssemblyName>FluentFlyout.Lyrics.Tests</AssemblyName>
+    <RootNamespace>FluentFlyout.Lyrics.Tests</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\FluentFlyout.Lyrics\TaskbarLyrics.Core.csproj" />
+    <ProjectReference Include="..\FluentFlyout.Lyrics\FluentFlyout.Lyrics.csproj" />
   </ItemGroup>
 
   <ItemGroup>

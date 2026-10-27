@@ -8,11 +8,11 @@
 using Lyricify.Lyrics.Models;
 using Lyricify.Lyrics.Parsers;
 using System.Text.RegularExpressions;
-using TaskbarLyrics.Core.Abstractions;
-using TaskbarLyrics.Core.Models;
-using TaskbarLyrics.Core.Utilities;
+using FluentFlyout.Lyrics.Abstractions;
+using FluentFlyout.Lyrics.Models;
+using FluentFlyout.Lyrics.Utilities;
 
-namespace TaskbarLyrics.Core.Services;
+namespace FluentFlyout.Lyrics.Services;
 
 public sealed partial class LyricifyPayloadParser : ILyricPayloadParser
 {

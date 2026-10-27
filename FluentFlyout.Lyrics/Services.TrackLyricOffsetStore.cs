@@ -7,11 +7,11 @@
 
 using System.Text;
 using Microsoft.EntityFrameworkCore;
-using TaskbarLyrics.Core.Database;
-using TaskbarLyrics.Core.Models;
-using TaskbarLyrics.Core.Utilities;
+using FluentFlyout.Lyrics.Database;
+using FluentFlyout.Lyrics.Models;
+using FluentFlyout.Lyrics.Utilities;
 
-namespace TaskbarLyrics.Core.Services;
+namespace FluentFlyout.Lyrics.Services;
 
 public sealed class TrackLyricOffsetStore : IDisposable
 {

@@ -9,10 +9,10 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Security.Authentication;
-using TaskbarLyrics.Core.Services;
+using FluentFlyout.Lyrics.Services;
 using Xunit;
 
-namespace TaskbarLyrics.Core.Tests;
+namespace FluentFlyout.Lyrics.Tests;
 
 public sealed class LyricTransientFailurePolicyTests
 {

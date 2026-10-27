@@ -8,11 +8,11 @@
 using System.Net;
 using System.Net.Http;
 using System.Text;
-using TaskbarLyrics.Core.Models;
-using TaskbarLyrics.Core.Services;
+using FluentFlyout.Lyrics.Models;
+using FluentFlyout.Lyrics.Services;
 using Xunit;
 
-namespace TaskbarLyrics.Core.Tests;
+namespace FluentFlyout.Lyrics.Tests;
 
 public sealed class QqMusicRecoveryTests
 {

@@ -6,10 +6,10 @@
 // 本仓库整体按 GPL-3.0-or-later 分发。
 
 using System.Text.RegularExpressions;
-using TaskbarLyrics.Core.Models;
-using TaskbarLyrics.Core.Utilities;
+using FluentFlyout.Lyrics.Models;
+using FluentFlyout.Lyrics.Utilities;
 
-namespace TaskbarLyrics.Core.Services;
+namespace FluentFlyout.Lyrics.Services;
 
 public static partial class LyricSearchPlanner
 {

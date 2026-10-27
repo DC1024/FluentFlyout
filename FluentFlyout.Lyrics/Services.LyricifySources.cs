@@ -8,10 +8,10 @@
 using System.Net.Http;
 using Lyricify.Lyrics.Helpers;
 using Lyricify.Lyrics.Searchers;
-using TaskbarLyrics.Core.Abstractions;
-using TaskbarLyrics.Core.Models;
+using FluentFlyout.Lyrics.Abstractions;
+using FluentFlyout.Lyrics.Models;
 
-namespace TaskbarLyrics.Core.Services;
+namespace FluentFlyout.Lyrics.Services;
 
 public sealed class KugouLyricSource : ILyricSource
 {

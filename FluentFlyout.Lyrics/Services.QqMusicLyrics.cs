@@ -12,11 +12,11 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
-using TaskbarLyrics.Core.Abstractions;
-using TaskbarLyrics.Core.Models;
-using TaskbarLyrics.Core.Utilities;
+using FluentFlyout.Lyrics.Abstractions;
+using FluentFlyout.Lyrics.Models;
+using FluentFlyout.Lyrics.Utilities;
 
-namespace TaskbarLyrics.Core.Services;
+namespace FluentFlyout.Lyrics.Services;
 
 /// <summary>
 /// QQ 音乐歌词通道：使用歌曲搜索与歌词下载接口，歌词接口只接受数字 songid。

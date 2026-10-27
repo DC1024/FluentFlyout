@@ -5,10 +5,10 @@
 // 的 TaskbarLyrics.Core.Tests，原始许可为 MIT（见仓库根目录 LICENSE-TaskbarLyrics）。
 // 本仓库整体按 GPL-3.0-or-later 分发。
 
-using TaskbarLyrics.Core.Abstractions;
-using TaskbarLyrics.Core.Models;
+using FluentFlyout.Lyrics.Abstractions;
+using FluentFlyout.Lyrics.Models;
 
-namespace TaskbarLyrics.Core.Tests;
+namespace FluentFlyout.Lyrics.Tests;
 
 internal sealed class PlainTextLyricParser : ILyricPayloadParser
 {

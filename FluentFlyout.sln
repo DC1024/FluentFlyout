@@ -9,17 +9,11 @@ Project("{C7167F0D-BC9F-4E6E-AFE1-012C56B48DB5}") = "FluentFlyoutMSIX", "FluentF
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FluentFlyout.SourceGenerators", "FluentFlyout.SourceGenerators\FluentFlyout.SourceGenerators.csproj", "{5DB1F6F1-940A-4174-BF1C-4DF0739058B6}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "FluentFlyout.Lyrics", "FluentFlyout.Lyrics", "{4D193B97-D9BB-8420-C483-FF7D1E5C3F50}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TaskbarLyrics.Core", "FluentFlyout.Lyrics\TaskbarLyrics.Core.csproj", "{6217E0C7-7AC4-45A9-957E-EA81ACC1DFEC}"
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "FluentFlyout.Lyrics.Probe", "FluentFlyout.Lyrics.Probe", "{84C96CF7-DED9-8416-9932-C2FD76C420F5}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FluentFlyout.Lyrics", "FluentFlyout.Lyrics\FluentFlyout.Lyrics.csproj", "{6217E0C7-7AC4-45A9-957E-EA81ACC1DFEC}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "verify", "FluentFlyout.Lyrics.Probe\verify.csproj", "{7EE0D0B9-ABF6-4B86-A9A7-6551818E92B7}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "FluentFlyout.Lyrics.Tests", "FluentFlyout.Lyrics.Tests", "{E273A3B6-5548-5AE2-E8CA-1D4F4E7C51AF}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TaskbarLyrics.Core.Tests", "FluentFlyout.Lyrics.Tests\TaskbarLyrics.Core.Tests.csproj", "{B46F15CE-1198-4DDB-8DEC-48B0EF282218}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FluentFlyout.Lyrics.Tests", "FluentFlyout.Lyrics.Tests\FluentFlyout.Lyrics.Tests.csproj", "{B46F15CE-1198-4DDB-8DEC-48B0EF282218}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -238,11 +232,6 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
-	EndGlobalSection
-	GlobalSection(NestedProjects) = preSolution
-		{6217E0C7-7AC4-45A9-957E-EA81ACC1DFEC} = {4D193B97-D9BB-8420-C483-FF7D1E5C3F50}
-		{7EE0D0B9-ABF6-4B86-A9A7-6551818E92B7} = {84C96CF7-DED9-8416-9932-C2FD76C420F5}
-		{B46F15CE-1198-4DDB-8DEC-48B0EF282218} = {E273A3B6-5548-5AE2-E8CA-1D4F4E7C51AF}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {41AF4B16-B9E8-4F06-BB36-6F2C3183CBD0}

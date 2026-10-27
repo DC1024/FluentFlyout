@@ -9,7 +9,7 @@ using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Globalization;
 
-namespace TaskbarLyrics.Core.Database;
+namespace FluentFlyout.Lyrics.Database;
 
 public sealed class TrackLyricOffset
 {

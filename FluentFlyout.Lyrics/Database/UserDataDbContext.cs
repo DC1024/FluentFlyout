@@ -7,7 +7,7 @@
 
 using Microsoft.EntityFrameworkCore;
 
-namespace TaskbarLyrics.Core.Database;
+namespace FluentFlyout.Lyrics.Database;
 
 public sealed class UserDataDbContext : DbContext
 {

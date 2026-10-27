@@ -7,7 +7,7 @@
 
 using System.ComponentModel.DataAnnotations;
 
-namespace TaskbarLyrics.Core.Database;
+namespace FluentFlyout.Lyrics.Database;
 
 public class SongSearchMap
 {

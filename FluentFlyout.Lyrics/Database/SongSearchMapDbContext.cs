@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using System;
 using System.IO;
 
-namespace TaskbarLyrics.Core.Database;
+namespace FluentFlyout.Lyrics.Database;
 
 public class SongSearchMapDbContext : DbContext
 {
