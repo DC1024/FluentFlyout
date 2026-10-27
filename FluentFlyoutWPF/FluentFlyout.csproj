@@ -98,6 +98,11 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\FluentFlyout.SourceGenerators\FluentFlyout.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <!--
+      歌词引擎（移植自 TaskbarLyrics Core）。纯逻辑、不依赖 WPF/Dubya，
+      由 Lyrics/ 下的适配器把它接到本工程的 MediaManager 上。
+    -->
+    <ProjectReference Include="..\FluentFlyout.Lyrics\FluentFlyout.Lyrics.csproj" />
   </ItemGroup>
   <ItemGroup>
     <AdditionalFiles Include="Pages\**\*.xaml" />
