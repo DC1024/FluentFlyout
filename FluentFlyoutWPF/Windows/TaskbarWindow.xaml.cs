@@ -791,6 +791,8 @@ on_error:
         // fallbackWidth 刻意仍是 480，**不跟着竖向上限变大**：它表示
         // 「一个空隙都塞不进去 / 占用区未知」时退回的有界常量。那种情况下
         // 任务栏已经没有空间了，退回一个更大的值只会压到托盘图标上。
+        // 它同样不预先扣频谱宽度——扣在下面统一做，于是退路下歌词实际拿
+        // 480−88=392：频谱在场时把 480 全给歌词，加 84 就会顶到托盘。
         var budget = TaskbarWidthBudget.Resolve(
             desiredWidth: (desiredDip + visualizerExtraDip) * dpiScale,
             fallbackWidth: MaxLyricsWidgetWidth * dpiScale,
