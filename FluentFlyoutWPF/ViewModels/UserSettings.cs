@@ -1210,6 +1210,14 @@ public partial class UserSettings : ObservableObject
             return;
         }
 
+        // 这里**刻意没有** !IsPremiumUnlocked 的短路回滚，
+        // 与 OnTaskbarWidgetEnabledChanged 不同——这是决定不是遗漏。
+        // 上面那条判断已经把未解锁用户拦住了：TaskbarWidgetEnabled 在
+        // 未解锁时恒为 false（由它自己的钩子回滚），所以走不到这里。
+        // 若将来给歌词加独立门控，必须在这里补一条对称的回滚，
+        // 否则会出现「开关开着但没歌词」。完整清单见
+        // Pages/LyricsPage.xaml.cs 的类级 remarks。
+
         if (newValue && TaskbarVisualizerEnabled)
         {
             TaskbarVisualizerEnabled = false;

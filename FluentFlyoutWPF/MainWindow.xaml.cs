@@ -2049,9 +2049,22 @@ public partial class MainWindow : MicaWindow
     /// 懒创建歌词服务。返回已存在的实例，不重复创建。
     /// </summary>
     /// <remarks>
+    /// <para>
     /// 会话选择回调传的是 <see cref="GetActiveMediaSession"/> 本身而不是
     /// 复制一份逻辑——FF 那套语义叠加了应用黑白名单与 pinned 失效清理，
     /// 复制必然与主界面分叉（见 P2 的架构决定）。
+    /// </para>
+    /// <para>
+    /// <b>本服务不检查 <c>IsPremiumUnlocked</c>，是设计决定。</b>
+    /// 歌词唯一的显示位置是任务栏小组件，而小组件本身已有 Premium 门控
+    /// （<c>TaskbarWindow.UpdatePosition</c> 与
+    /// <c>UserSettings.OnTaskbarWidgetEnabledChanged</c> 两处）。
+    /// 未解锁的用户开不了小组件 → <see cref="ApplyLyricsSettingsTo"/> 里的
+    /// <c>active</c> 恒为 false → 帧泵根本不会启动。
+    /// 再加一层判断不会多拦住任何用户，却会多出一个 bug 面。
+    /// 完整理由与「若要加必须同时做的三件事」见
+    /// <c>Pages/LyricsPage.xaml.cs</c> 的类级 remarks。
+    /// </para>
     /// </remarks>
     internal LyricsService EnsureLyricsService()
     {
@@ -2134,6 +2147,11 @@ public partial class MainWindow : MicaWindow
         // 「歌词真正生效」= 用户开了歌词 + 任务栏小组件本身是开的。
         // 少任何一个条件都不该启泵：泵每 33ms 做一次跨进程 COM 采样，
         // 白跑着就是纯浪费。
+        //
+        // 这里**刻意不检查 IsPremiumUnlocked**，是设计决定而不是疏漏。
+        // 详细理由见 EnsureLyricsService 的 remarks；一句话：
+        // 小组件已经把 Premium 挡住了，歌词没有独立的显示位置，
+        // 再加一层不会多拦住任何用户，却会多出一个「帧泵在白跑」的 bug 面。
         var active = settings.LyricsEnabled && settings.TaskbarWidgetEnabled;
         service.SetEnabled(active);
 
