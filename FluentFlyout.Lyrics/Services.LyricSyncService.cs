@@ -144,10 +144,10 @@ public sealed class LyricSyncService : IDisposable
                 _currentLyricSourceApp = null;
                 _currentLyricAcquisition = LyricAcquisitionKind.Searching;
                 _currentLyricFetchElapsedMilliseconds = 0;
-            _currentLyricResolvedAtUtc = null;
-            _lastEmittedLineIndex = -1;
-            PublishTrackEndEstimate(null);
-            StartLyricsUpdate(trackId);
+                _currentLyricResolvedAtUtc = null;
+                _lastEmittedLineIndex = -1;
+                PublishTrackEndEstimate(null);
+                StartLyricsUpdate(trackId);
             }
         }
 
