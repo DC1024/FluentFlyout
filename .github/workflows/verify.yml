@@ -1,0 +1,161 @@
+name: verify
+
+# FluentFlyout × TaskbarLyrics 合并的前置门槛验证。
+# 出处：DC1024/ff-lyrics-verify（P0 阶段迁入本仓，原仓归档）。
+#
+# 触发条件：
+#   - 推送到 master 且触及歌词相关目录
+#   - 任何 PR
+#   - 手动触发（可指定是否跑 ARM64）
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'FluentFlyout.Lyrics/**'
+      - 'FluentFlyout.Lyrics.Probe/**'
+      - '.github/workflows/verify.yml'
+  pull_request:
+    paths:
+      - 'FluentFlyout.Lyrics/**'
+      - 'FluentFlyout.Lyrics.Probe/**'
+      - '.github/workflows/verify.yml'
+  workflow_dispatch:
+    inputs:
+      run_arm64:
+        description: '同时验证 ARM64'
+        type: boolean
+        default: true
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # J1：兼容性探针 —— 判定门槛：9/9 全部 PASS，返回码 0
+  # ─────────────────────────────────────────────────────────────
+  probe:
+    name: J1 兼容性探针
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: 缓存 NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: 还原
+        working-directory: FluentFlyout.Lyrics.Probe
+        run: dotnet restore
+
+      # -warnaserror 是硬门槛，不允许带警告通过
+      - name: 编译（警告视为错误）
+        working-directory: FluentFlyout.Lyrics.Probe
+        run: dotnet build -c Release --no-restore -warnaserror
+
+      # 程序返回码即判定结果：0=全通过，1=有失败
+      - name: 执行探针
+        working-directory: FluentFlyout.Lyrics.Probe
+        run: dotnet run -c Release --no-build
+
+      - name: 汇总到 Job Summary
+        if: always()
+        shell: pwsh
+        run: |
+          $json = Get-ChildItem -Recurse -Filter results.json -Path FluentFlyout.Lyrics.Probe/bin -ErrorAction SilentlyContinue |
+                  Select-Object -First 1
+          if (-not $json) { "未找到 results.json" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY; exit 0 }
+          $data = Get-Content $json.FullName -Raw -Encoding utf8 | ConvertFrom-Json
+          "| 编号 | 检查项 | 结果 | 详情 |" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          "|---|---|---|---|"                 | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          foreach ($r in $data) {
+            $icon = if ($r.pass) { 'PASS' } else { 'FAIL' }
+            "| $($r.id) | $($r.name) | $icon | $($r.detail) |" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: 归档结果
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-results
+          path: FluentFlyout.Lyrics.Probe/bin/Release/**/results.json
+          if-no-files-found: warn
+
+  # ─────────────────────────────────────────────────────────────
+  # J2：Core 编译门槛 —— 双 RID 证明 TL.Core 能在 FF 的 TFM 下编译
+  # ─────────────────────────────────────────────────────────────
+  core-migration:
+    name: J2 Core 编译 (${{ matrix.rid }})
+    runs-on: windows-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            arm64: false
+          - rid: win-arm64
+            arm64: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: 缓存 NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # ARM64 在 PR 场景跳过以省时间；需要时手动触发
+      - name: 判定是否跳过
+        id: skip
+        shell: pwsh
+        run: |
+          $skip = ('${{ matrix.arm64 }}' -eq 'true') -and ('${{ github.event_name }}' -eq 'pull_request')
+          "skip=$($skip.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
+      - name: 还原
+        if: steps.skip.outputs.skip != 'true'
+        working-directory: FluentFlyout.Lyrics
+        run: dotnet restore -r ${{ matrix.rid }}
+
+      - name: 编译 Core（警告视为错误）
+        if: steps.skip.outputs.skip != 'true'
+        working-directory: FluentFlyout.Lyrics
+        run: dotnet build -c Release -r ${{ matrix.rid }} --no-restore -warnaserror
+
+      # 依赖漏洞扫描：仅报告，不作为失败条件。
+      # 上游新增 CVE 不应阻断与本次移植无关的 PR。
+      - name: 依赖漏洞扫描（仅报告）
+        if: steps.skip.outputs.skip != 'true'
+        continue-on-error: true
+        working-directory: FluentFlyout.Lyrics
+        run: dotnet list package --vulnerable --include-transitive 2>&1 | Tee-Object -FilePath vuln-${{ matrix.rid }}.log
+
+      - name: 归档漏洞报告
+        if: always() && steps.skip.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: vuln-${{ matrix.rid }}
+          path: FluentFlyout.Lyrics/vuln-${{ matrix.rid }}.log
+          if-no-files-found: ignore

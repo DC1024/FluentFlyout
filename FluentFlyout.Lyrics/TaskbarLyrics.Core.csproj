@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 从 TaskbarLyrics 原始的 net8.0 改为 FluentFlyout 的 TFM。
+         这是 P1「Core 移植」能否成立的核心断言点。 -->
+    <TargetFramework>net10.0-windows10.0.22000.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- 注意：这里刻意不写 Platforms / RuntimeIdentifier。
+         Platform 是 VS 解决方案的概念，RID 由 CI 通过 -r 显式传入，
+         这样才能在同一个 csproj 上分别验证 win-x64 与 win-arm64。 -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="F23.StringSimilarity" Version="7.0.1" />
+    <PackageReference Include="Lyricify.Lyrics.Helper" Version="0.2.0" />
+    <!-- 原为 8.0.8，此处升到 10.x 验证 API 兼容性。
+         取 10.0.14 而非 10.0.0 的原因：10.0.0 会传递引入
+         SQLitePCLRaw.lib.e_sqlite3 2.1.11，命中 GHSA-2m69-gcr7-jv3q（高危），
+         在 -warnaserror 下会被升格为 error NU1903 而阻断构建。 -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
+    <PackageReference Include="OpenCC" Version="0.1.0" />
+  </ItemGroup>
+
+</Project>
