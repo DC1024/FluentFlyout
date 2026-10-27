@@ -330,17 +330,60 @@ panel 用 `RenderTransform(-90)` 后，父级仍按 `185×40` 给它排版，
 需要的主轴长度 = 行数 × 行高。估算在 `LyricsVerticalLayout.EstimateMainAxisLength`：
 
 ```
-rows = ceil(contentWidth / (crossSize - WrapSafetyMargin))
-length = min(rows * lineHeight, maxLength)
+primaryRows   = ceil(primaryWidth / (crossSize - WrapSafetyMargin))
+secondaryRows = ceil(secondaryWidth / (crossSize - WrapSafetyMargin))   // 有次要行时
+length = min(primaryRows * primaryLineHeight
+           + gap + secondaryRows * secondaryLineHeight, maxLength)
 ```
 
-三个容易写错的点，都在单测里锁了：
+四个容易写错的点，都在单测里锁了：
 
 1. **向上取整**。差 0.1 像素也要算一行，否则最后几个字被切掉。
 2. **不夹 `MinimumLength`**。一句短歌词折成两行约 30 DIP，硬夹到 64 会让小组件
    白占空间、主轴上留一条空白。下限只用于「输入不可用」的兜底路径。
-3. **先夹 `rows` 再乘**。用户拖来一句 200 字的歌词时 `rows * lineHeight`
-   会溢出成 Infinity。
+3. **两行必须相加，不能取较大者**。当前行与翻译/下一行是**各自独立折行**的：
+   各折 2 行就是 4 行。早期实现只算主行，截图矩阵实测双行状态估 29.9 DIP、
+   实际要 63.4 DIP，次要行被 `ClipToBounds` 整行裁掉。
+4. **行高必须用实测值**。`LyricsPanelMetrics.LineHeight` 是「字号 × 1.15」的
+   名义值（13px → 14.95），而 `FormattedText.Height` 实际是 16.51，差 10%。
+   每行少算 1.5 DIP，五行就少 7.5 DIP。所以 `LyricsVerticalContent` 里的行高
+   一律来自 `FormattedText` 实测，不接受名义值。
+
+#### 4.7.1 禁则偏差交给实测，不在估算里猜
+
+中文排版有禁则处理（标点不能出现在行首），实际折行会比纯宽度除法**多约一行**。
+这个偏差**刻意不修在估算里**：
+
+- 它取决于标点出现在哪、每行放几个字，是**文本内容的函数**，不是宽度的函数；
+  `LyricsVerticalLayout` 是纯算术层，拿不到文本；
+- 硬塞「每行减一个字」的系数会在短句上凭空多算一行（实测 `single` 状态
+  从 33.0 涨到 49.5，白占一行高度），而在长句上又可能仍然不够——
+  本段先后试过固定乘 0.92、按字符数折算两种写法，两次都在短句上翻车。
+
+正确的分工是**估算给下限、实测兜上限**：
+
+```csharp
+// TaskbarWidgetControl.MeasureDesiredWidth，竖向分支
+var estimate = LyricsVerticalLayout.EstimateMainAxisLength(...);
+var measured = LyricsPanel.VerticalContentHeight;   // RootGrid.ActualHeight
+return measured > estimate ? Math.Min(measured, MaxLyricsWidgetLength) : estimate;
+```
+
+`LyricsPanel.VerticalContentHeight` 在竖向会先按实测折行结果写好两行 Canvas 的
+高度，再返回 `RootGrid.ActualHeight`——这个值就是「TextBlock 到底折了几行」
+的权威答案。只取较大者、不做双向对齐：估算偏大是宿主主动申请的占位，
+缩回去会让任务栏留空白，且下一帧估算又撑起来，形成抖动。
+
+截图矩阵实测（60 DIP 宽、13px 字号）：
+
+| 状态 | 估算 | 实测 | 差 |
+|---|---|---|---|
+| single | 33.0 | 33.0 | 0 |
+| two-line | 63.4 | 63.4 | 0 |
+| translation | 79.9 | 79.9 | 0 |
+| long-line | 160.2 | **176.7** | **+16.5（禁则多一行）** |
+
+`long-line` 那 16.5 就是被实测兜住的一行——没有这条路径，末行「开」会被裁掉。
 
 ## 5. 小任务栏（28px）必须单行
 
@@ -391,30 +434,32 @@ length = min(rows * lineHeight, maxLength)
 | #9 | 完成 | `1eaf4ae` |
 | #10 | 完成 | `0d408aa` |
 | #11 | 完成 | `61ec39f` |
-| #12 | 完成 | `b13fa0c`（竖向初版）+ 本轮修正 |
-| #13 | 待办 | — |
+| #12 | 完成 | `b13fa0c`（竖向初版）+ `086faef`（二次实测修正） |
+| #13 | 进行中 | 截图矩阵已建好（72 张全绿），待归档与 PR |
 
-### 7.2 竖向几何探针
+### 7.2 两个探针，两种用途
 
-`FluentFlyout.Lyrics.Probe.Render` 是一个离屏渲染探针，用来**实证**竖向任务栏的
-排版方案，而不是靠推导。它把与 `TaskbarWindow.PositionWidget` 同构的变换链
-搭出来，用 `RenderTargetBitmap` 渲染，再按像素统计墨迹包围盒。
+P3 阶段有两个离屏渲染探针，**用途不同，不要混用**：
+
+| 探针 | 用途 | 输入 | 断言数 |
+|---|---|---|---|
+| `Probe.Render` | **几何方案选型**：验证「竖向到底该不该旋转」 | 手工搭的近似视觉树 | 13 |
+| `Probe.Screenshot` | **视觉验收**：渲染真实 `LyricsPanel`，出可归档的图 | mock 帧 + 真实控件 | 72 张 / 6 类断言 |
 
 ```bash
 dotnet run --project FluentFlyout.Lyrics.Probe.Render/Probe.Render.csproj
+dotnet run --project FluentFlyout.Lyrics.Probe.Screenshot/Probe.Screenshot.csproj
 ```
 
-- 退出码 0 = 全部断言通过，可直接作为 CI 门禁；
-- PNG 输出到 `bin/.../out/`，已归档的对照图在 `docs/lyrics-integration/probe/`；
-- 共 10 个方案、13 条断言。
+两者退出码 0 = 全部断言通过，可直接作为 CI 门禁。
 
-**探针本身被推翻过两次，这个教训比结论更值得记：**
+#### 7.2.1 `Probe.Render`：几何选型的两次推翻
 
-1. **第一轮推翻了「加 −90 就正立」的推导**（C 方案墨迹 0px）。
-   教训：几何推理在布局系统里不可靠，必须渲染出来看。
-2. **第二轮推翻了第一轮自己的 H 方案**。H 的前提是「Widget 不旋转」，
-   而真机上 `PositionWidget` 对竖向是**无条件**旋转的。
-   教训：探针的**变换链必须与生产代码逐行对齐**，少一层就得出反向结论。
+- 第一轮推翻「加 −90 就正立」的推导（C 方案墨迹 0px）。
+  教训：几何推理在布局系统里不可靠，必须渲染出来看。
+- 第二轮推翻第一轮自己的 H 方案。H 的前提是「Widget 不旋转」，
+  而真机上 `PositionWidget` 对竖向是**无条件**旋转的。
+  教训：探针的**变换链必须与生产代码逐行对齐**，少一层就得出反向结论。
 
 现在有两类回归护栏：
 
@@ -427,5 +472,80 @@ dotnet run --project FluentFlyout.Lyrics.Probe.Render/Probe.Render.csproj
 窄容器里多行横排的包围盒天然接近正方形，宽高比失去判别力（第一轮在 ABCD 上
 连踩两次）。改用单个宽扁字符 `—`：正立是横线（宽高比 ≈ 20），
 躺倒变竖线（≈ 0.05），判别力足够且与字体无关。
+
+#### 7.2.2 `Probe.Screenshot`：为什么必须用 mock 帧
+
+**P3 结束时歌词层还没有接线**：`TaskbarWidgetControl.SetLyricsMode` 与
+`UpdateLyricsFrame` 在生产代码里没有任何调用点（`grep` 只命中定义与注释），
+`LyricFramePump` 同样无人引用。真正的装配在 P4 的 `LyricsService`。
+
+所以「真机播放截图验收」这条路现在跑不通。截图矩阵必须用 mock 帧驱动——
+这正是 `Probe.Screenshot` 的存在理由：它把面板当成普通控件，喂帧、设度量、
+渲染成 PNG，产物可直接贴进 PR。
+
+矩阵规模：3 DPI（100/150/200%）× 2 主题（浅/深）× 2 方向 × 6 状态 = **72 张**。
+状态覆盖单行、双行、翻译行、逐字扫描、长句、纯音乐。
+
+竖向渲染必须**复刻生产的两层变换**，否则测的不是生产行为：
+
+```csharp
+// Panel 逻辑 (Wp × Hp) ── −90 ── Widget 内部 (Hp × Wp) ── +90 ── 屏幕 (Wp × Hp)
+// 要让 Panel 填满 Widget：Hp = Ww、Wp = Hw
+panel.Width = VerticalWidth;        // 60 = 任务栏宽度
+panel.Height = mainAxisLength;      // ≈ 400 = 主轴长度
+var widget = new Border {
+    Width = mainAxisLength, Height = VerticalWidth,
+    Child = panel, LayoutTransform = new RotateTransform(90),
+};
+```
+
+第一版把 `Width`/`Height` 写反（`Width = 主轴长度`），结果面板内部按 400 宽排版、
+一行放得下整句，屏幕上只看到两三个字——与 C 方案同源的坑。
+
+#### 7.2.3 截图矩阵抓到的两个真实缺陷
+
+这两个都是**生产代码的缺陷**，不是探针的问题，且都不会在肉眼扫一眼时被发现：
+
+1. **`Canvas` 在 `Auto` 行里塌成 0 高。** 竖向把 `PrimaryContainer.Height`
+   设成 `NaN` 后，`PrimaryRow="Auto"` + `Canvas` → 主行高度 0 → 主行文字
+   被 `ClipToBounds` **全部裁掉**；次要行因 `SecondaryRow` 仍是固定
+   `LineHeight` 反而可见。表现是「单行状态无墨迹、双行状态只画 1 行」。
+   `Canvas.MeasureOverride` 对任何内容都返回 `(0,0)`，这是它的设计。
+   修法：竖向必须显式把实测折行高度写回 `Canvas.Height`。
+
+2. **估算只算主行，次要行溢出面板。** 见 4.7 第 3 点。
+
+诊断手段值得记下来：**分层打印 `ActualHeight`**（panel / RootGrid /
+PrimaryContainer / SecondaryContainer）一次就能定位到是哪一层没生效。
+只看最终 PNG 只会看到「字没了」，看不出是哪一层的问题。
+
+#### 7.2.4 竖向断言的判据也不能用宽高比
+
+这是同一个陷阱在截图矩阵上的**第二次复发**。原本写的是
+「竖向换行生效 ⇔ 墨迹纵向 > 横向」，但 8 个字在 60 DIP 宽里折成 2 行 × 4 字，
+包围盒 52×33——接近正方形，宽高比失去判别力，单行状态必然失败。
+
+改用**内容宽度 vs 面板宽度**：竖向正确时折行会把内容压到面板宽度内；
+没换行时内容远超面板宽度、被裁成一条。再补一条「纵向至少两行高」
+排除「只剩一个字」的退化情况。这个判据与文本长度无关，短句长句都成立。
+
+### 7.3 归档截图
+
+`Probe.Screenshot` 每次生成 72 张，代表性样本归档在
+`docs/lyrics-integration/screenshots/`（全量产物在 `bin/.../shots/`）：
+
+| 文件 | 内容 | 验证点 |
+|---|---|---|
+| `K-horizontal-two-line.png` | 横向 · 双行 | 基准行为未变 |
+| `L-horizontal-long-line.png` | 横向 · 长句 | 长句不折行、走滚动 |
+| `M-vertical-single.png` | 竖向 · 单行 | 主行折行、无次要行 |
+| `N-vertical-two-line.png` | 竖向 · 双行 | **主行 + 下一行都完整** |
+| `O-vertical-translation.png` | 竖向 · 翻译行 | 翻译行字号更小、颜色更淡 |
+| `P-vertical-long-line.png` | 竖向 · 长句 | **末行不被裁**（禁则多一行） |
+| `Q-vertical-dark-two-line.png` | 竖向 · 深色 | 深色主题对比度 |
+| `R-horizontal-200-word-scan.png` | 横向 · 200% · 逐字扫描 | 扫描遮罩位置与 DPI 无关 |
+
+加粗的三项是本轮修掉的缺陷对应的回归样本——将来若有人动了
+`UpdateVerticalWrapLayout` 或估算公式，这三张会先变。
 
 

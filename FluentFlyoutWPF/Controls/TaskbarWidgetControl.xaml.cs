@@ -361,6 +361,11 @@ public partial class TaskbarWidgetControl : UserControl
             // 竖向：一句歌词必然折成多行，需要的主轴长度 = 行数 × 行高。
             // 估算逻辑在 Core 的 LyricsVerticalLayout 里（可单测）。
             //
+            // **必须传两行内容**（MeasureVerticalContent），不能只传主行宽度：
+            // 当前行与翻译/下一行各自独立折行，只按主行估会漏掉次要行整块。
+            // 截图矩阵实测：双行状态按主行估 29.9 DIP、实际要 63.4 DIP，
+            // 次要行被 ClipToBounds 整行裁掉。
+            //
             // 上限给 MaxLyricsWidgetLength：横向时它是 480 DIP 宽度，
             // 竖向时同值作为「最多占主轴 480 DIP」——对 1080p 屏
             //（主轴约 1040 DIP）不到一半，不会盖住任务栏中部的应用按钮。
@@ -368,11 +373,27 @@ public partial class TaskbarWidgetControl : UserControl
                 ? LyricsMetricsPolicy.SmallTaskbarCrossSize
                 : LyricsMetricsPolicy.DefaultTaskbarCrossSize;
 
-            return LyricsVerticalLayout.EstimateMainAxisLength(
-                contentWidth: LyricsPanel.DesiredContentWidth,
+            var estimate = LyricsVerticalLayout.EstimateMainAxisLength(
+                content: LyricsPanel.MeasureVerticalContent(),
                 crossSize: crossSize,
-                lineHeight: LyricsPanel.Metrics.LineHeight,
                 maxLength: MaxLyricsWidgetLength);
+
+            // 用面板的**实测内容高度**兜住估算偏小的一侧。
+            //
+            // 估算是按宽度除法推的近似值，而实际折行由 TextBlock 的断行算法
+            // 决定：中文标点禁则会让实际行数比估算多一行。估算偏小的后果是
+            // 外层 Widget.Height 不够、最后一行被 ClipToBounds 整行裁掉，
+            // 而截图上看起来只是「字少了点」，很难发现。
+            //
+            // 只取较大者、不做双向对齐：估算偏大是宿主主动申请的占位，
+            // 缩回去会让任务栏留空白，且下一帧估算又撑起来，形成抖动。
+            var measured = LyricsPanel.VerticalContentHeight;
+            if (double.IsFinite(measured) && measured > estimate)
+            {
+                return Math.Min(measured, MaxLyricsWidgetLength);
+            }
+
+            return estimate;
         }
 
         var coverImageMargin = _isSmallTaskbar ? SmallCoverImageMargin : DefaultCoverImageMargin;
@@ -727,9 +748,8 @@ public partial class TaskbarWidgetControl : UserControl
         // 竖向时不设：竖向下 LyricsPanel 的宽度由「任务栏宽度」决定，
         // 与这里的 logicalWidth（主轴长度）不是同一个量。竖向下
         // logicalWidth 对应屏幕纵向延伸，写进 LyricsPanel.Width 会让面板
-        // 变成一条极长的横条，换行完全失效。竖向的视口宽度由
-        // LyricsPanel.UpdateVerticalWrapWidth 自己从 PrimaryContainer
-        // 的实际宽度取。
+        // 变成一条极长的横条，换行完全失效。竖向的折行宽度由
+        // LyricsPanel.UpdateVerticalWrapLayout 从面板自身的实际宽度取。
         if (_isLyricsMode && !_isVertical && widthChanged)
         {
             LyricsPanel.Width = newTitleContainerWidth;
@@ -756,8 +776,8 @@ public partial class TaskbarWidgetControl : UserControl
         // 这里仍然返回 40 / 28（任务栏短边的标准值）：TaskbarWindow 的
         // crossPos 计算是 `(crossSize - physicalHeight) / 2`，若两边取同一来源
         // （都来自 SettingsManager 的短边判定），居中的结果才稳定。
-        // 真正的可用宽度由 LyricsPanel.UpdateVerticalWrapWidth 从
-        // PrimaryContainer.ActualWidth 取，不依赖这个返回值。
+        // 真正的折行宽度由 LyricsPanel.UpdateVerticalWrapLayout 从
+        // 面板自身的实际宽度取，不依赖这个返回值。
         double logicalHeight = _isSmallTaskbar ? SmallTaskbarWidgetHeight : DefaultTaskbarWidgetHeight;
 
         return (logicalWidth, logicalHeight);

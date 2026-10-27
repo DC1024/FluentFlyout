@@ -210,4 +210,161 @@ public sealed class LyricsVerticalLayoutTests
         // 260 / 56 = 4.64 → 5 行 → 74.75
         Assert.Equal(5 * LineHeight, length, precision: 6);
     }
+
+    // ---------- 两行内容（当前行 + 翻译/下一行）----------
+    //
+    // 这一组对应截图矩阵实测到的真实缺陷：原实现只按主行估长度，
+    // 双行状态估 29.9 DIP、实际要 63.4 DIP，次要行被 ClipToBounds
+    // 整行裁掉。以下每条都是那次实测的具体数字。
+
+    /// <summary>截图矩阵里 two-line 状态的实测值（60 DIP 宽、13px 字号）。</summary>
+    private const double MeasuredPrimaryWidth = 104;   // 8 个中文字
+    private const double MeasuredPrimaryHeight = 16.5; // FormattedText 实测，不是名义 14.95
+    private const double MeasuredSecondaryWidth = 104;
+    private const double MeasuredGap = 2;
+
+    [Fact]
+    public void TwoLinesAddUpInsteadOfTakingMax()
+    {
+        // 主行折 2 行、次要行也折 2 行 → 必须相加得 4 行。
+        // 若错误地取「两行较宽者的行数」，结果会是 2 行，次要行被裁掉。
+        var content = new LyricsVerticalContent(
+            PrimaryWidth: MeasuredPrimaryWidth,
+            PrimaryLineHeight: MeasuredPrimaryHeight,
+            SecondaryWidth: MeasuredSecondaryWidth,
+            SecondaryLineHeight: MeasuredPrimaryHeight,
+            Gap: MeasuredGap);
+
+        var length = LyricsVerticalLayout.EstimateMainAxisLength(content, 60, 800);
+
+        // 104 / 56 = 1.86 → 2 行；两行各 2 行 → 4 × 16.5 + 2 = 68
+        Assert.Equal((4 * MeasuredPrimaryHeight) + MeasuredGap, length, precision: 6);
+    }
+
+    [Fact]
+    public void SecondaryLineIsNotDropped()
+    {
+        // 回归护栏：只要加了次要行，结果必须严格变大。
+        // 这条断言的价值在于——将来若有人「优化」成只算主行，它会立刻失败。
+        var primaryOnly = new LyricsVerticalContent(MeasuredPrimaryWidth, MeasuredPrimaryHeight);
+        var withSecondary = primaryOnly with
+        {
+            SecondaryWidth = MeasuredSecondaryWidth,
+            SecondaryLineHeight = MeasuredPrimaryHeight,
+            Gap = MeasuredGap,
+        };
+
+        var withoutLength = LyricsVerticalLayout.EstimateMainAxisLength(primaryOnly, 60, 800);
+        var withLength = LyricsVerticalLayout.EstimateMainAxisLength(withSecondary, 60, 800);
+
+        Assert.True(
+            withLength > withoutLength + MeasuredPrimaryHeight,
+            $"带次要行应至少多一行：{withLength} vs {withoutLength}");
+    }
+
+    [Fact]
+    public void SingleLineMatchesLegacyOverload()
+    {
+        // 简化入口必须与「只有主行」的完整入口完全等价，
+        // 否则既有调用方会在无感知的情况下改变行为。
+        var legacy = LyricsVerticalLayout.EstimateMainAxisLength(
+            contentWidth: 260, crossSize: 40, lineHeight: LineHeight, maxLength: 800);
+
+        var full = LyricsVerticalLayout.EstimateMainAxisLength(
+            new LyricsVerticalContent(260, LineHeight), 40, 800);
+
+        Assert.Equal(legacy, full, precision: 6);
+    }
+
+    [Fact]
+    public void EmptySecondaryWidthIsTreatedAsNoSecondaryLine()
+    {
+        // 单行模式下次要行是 Collapsed，宽度会是 0。
+        // 这时不能因为「有 Gap」就凭空多算 2 DIP。
+        var content = new LyricsVerticalContent(
+            PrimaryWidth: MeasuredPrimaryWidth,
+            PrimaryLineHeight: MeasuredPrimaryHeight,
+            SecondaryWidth: 0,
+            SecondaryLineHeight: 0,
+            Gap: MeasuredGap);
+
+        var length = LyricsVerticalLayout.EstimateMainAxisLength(content, 60, 800);
+
+        Assert.Equal(2 * MeasuredPrimaryHeight, length, precision: 6);
+        Assert.False(content.HasSecondary);
+    }
+
+    [Fact]
+    public void TwoLinesClampToMaxLength()
+    {
+        // 两行都很长时，结果仍不能超过预算。
+        var content = new LyricsVerticalContent(
+            PrimaryWidth: 5000,
+            PrimaryLineHeight: MeasuredPrimaryHeight,
+            SecondaryWidth: 5000,
+            SecondaryLineHeight: MeasuredPrimaryHeight,
+            Gap: MeasuredGap);
+
+        var length = LyricsVerticalLayout.EstimateMainAxisLength(content, 40, 400);
+
+        Assert.Equal(400, length, precision: 6);
+    }
+
+    [Fact]
+    public void MeasuredLineHeightIsHonouredNotNominal()
+    {
+        // 名义行高 14.95 与实测 16.5 差 10%：五行就差 7.5 DIP。
+        // 估算必须用调用方给的实测值，不能自己按字号推。
+        var content = new LyricsVerticalContent(
+            PrimaryWidth: 260,
+            PrimaryLineHeight: MeasuredPrimaryHeight);
+
+        var length = LyricsVerticalLayout.EstimateMainAxisLength(content, 60, 800);
+
+        // 260 / 56 = 4.64 → 5 行 × 16.5 = 82.5（不是 5 × 14.95 = 74.75）
+        Assert.Equal(5 * MeasuredPrimaryHeight, length, precision: 6);
+    }
+
+    [Fact]
+    public void EstimateIsPureWidthDivisionWithoutKinsokuFudge()
+    {
+        // **设计决策的回归护栏**：估算层刻意**不做**中文标点禁则修正。
+        //
+        // 禁则（标点不能出现在行首）会让实际折行比纯宽度除法多约一行，
+        // 但这个偏差取决于标点位置，是文本内容的函数，不是宽度的函数——
+        // 本文件是纯算术层，拿不到文本。硬塞「每行减一个字」的系数会在
+        // 短句上凭空多算一行（实测 single 状态从 33.0 涨到 49.5），
+        // 而长句上又可能仍不够。
+        //
+        // 正确的分工：估算给「下限」，实际偏差由 LyricsPanel.VerticalContentHeight
+        // 在布局后用实测值兜住（宿主取两者的较大者）。
+        //
+        // 这条断言锁住「估算必须保持纯算术」——若将来有人往 CountRows 里
+        // 加系数，它会立刻失败，提醒去看 VerticalContentHeight 那条路径。
+        var content = new LyricsVerticalContent(
+            PrimaryWidth: 377,      // 长句实测宽度
+            PrimaryLineHeight: 16.51);
+
+        var length = LyricsVerticalLayout.EstimateMainAxisLength(content, 60, 800);
+
+        // 377 / 56 = 6.73 → 7 行（纯算术）。实际 TextBlock 折了 8 行，
+        // 差的那一行由 VerticalContentHeight 补。
+        Assert.Equal(7 * 16.51, length, precision: 6);
+    }
+
+    [Fact]
+    public void ShortSingleLineDoesNotInflate()
+    {
+        // 回归护栏：一句放得下的短歌词必须只报一行。
+        // 若有人给 CountRows 加了「每行减一个字」的系数，这里会变成两行，
+        // 任务栏上就会白占一行高度。
+        var content = new LyricsVerticalContent(
+            PrimaryWidth: 104,      // 8 个中文字，60 DIP 宽里折 2 行
+            PrimaryLineHeight: 16.51);
+
+        var length = LyricsVerticalLayout.EstimateMainAxisLength(content, 60, 800);
+
+        // 104 / 56 = 1.86 → 2 行。这是**真实需要**的两行，不是膨胀。
+        Assert.Equal(2 * 16.51, length, precision: 6);
+    }
 }

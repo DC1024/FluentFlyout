@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows10.0.22000.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>preview</LangVersion>
+    <UseWPF>true</UseWPF>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <IsPackable>false</IsPackable>
+    <!-- 离线环境无漏洞数据源，只会刷 NU1900，没有信息量 -->
+    <NuGetAudit>false</NuGetAudit>
+    <!--
+      引用主工程是为了渲染**真实的** LyricsPanel / TaskbarWidgetControl，
+      而不是探针里那套手搭的近似视觉树。这样截图矩阵里看到的就是
+      用户会看到的东西（真实字号、真实间距、真实扫描渐变）。
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FluentFlyoutWPF\FluentFlyout.csproj" />
+  </ItemGroup>
+
+</Project>
