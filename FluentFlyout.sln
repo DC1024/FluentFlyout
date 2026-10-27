@@ -17,6 +17,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "FluentFlyout.Lyrics.Probe",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "verify", "FluentFlyout.Lyrics.Probe\verify.csproj", "{7EE0D0B9-ABF6-4B86-A9A7-6551818E92B7}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "FluentFlyout.Lyrics.Tests", "FluentFlyout.Lyrics.Tests", "{E273A3B6-5548-5AE2-E8CA-1D4F4E7C51AF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TaskbarLyrics.Core.Tests", "FluentFlyout.Lyrics.Tests\TaskbarLyrics.Core.Tests.csproj", "{B46F15CE-1198-4DDB-8DEC-48B0EF282218}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -201,6 +205,36 @@ Global
 		{7EE0D0B9-ABF6-4B86-A9A7-6551818E92B7}.Release|x64.Build.0 = Release|x64
 		{7EE0D0B9-ABF6-4B86-A9A7-6551818E92B7}.Release|x86.ActiveCfg = Release|x64
 		{7EE0D0B9-ABF6-4B86-A9A7-6551818E92B7}.Release|x86.Build.0 = Release|x64
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Debug|ARM.ActiveCfg = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Debug|ARM.Build.0 = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Debug|ARM64.ActiveCfg = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Debug|ARM64.Build.0 = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Debug|x64.Build.0 = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Debug|x86.Build.0 = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.GitHub Release|Any CPU.ActiveCfg = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.GitHub Release|Any CPU.Build.0 = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.GitHub Release|ARM.ActiveCfg = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.GitHub Release|ARM.Build.0 = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.GitHub Release|ARM64.ActiveCfg = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.GitHub Release|ARM64.Build.0 = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.GitHub Release|x64.ActiveCfg = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.GitHub Release|x64.Build.0 = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.GitHub Release|x86.ActiveCfg = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.GitHub Release|x86.Build.0 = Debug|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Release|ARM.ActiveCfg = Release|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Release|ARM.Build.0 = Release|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Release|ARM64.ActiveCfg = Release|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Release|ARM64.Build.0 = Release|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Release|x64.ActiveCfg = Release|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Release|x64.Build.0 = Release|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Release|x86.ActiveCfg = Release|Any CPU
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -208,6 +242,7 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{6217E0C7-7AC4-45A9-957E-EA81ACC1DFEC} = {4D193B97-D9BB-8420-C483-FF7D1E5C3F50}
 		{7EE0D0B9-ABF6-4B86-A9A7-6551818E92B7} = {84C96CF7-DED9-8416-9932-C2FD76C420F5}
+		{B46F15CE-1198-4DDB-8DEC-48B0EF282218} = {E273A3B6-5548-5AE2-E8CA-1D4F4E7C51AF}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {41AF4B16-B9E8-4F06-BB36-6F2C3183CBD0}

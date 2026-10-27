@@ -1,0 +1,15 @@
+# 测试样本的行尾必须固定为 LF。
+#
+# 原因：仓库根的 .gitattributes 有 `* text=auto`，git 会在检出时把文本文件
+# 转成平台默认行尾（Windows 上是 CRLF）。但 KRC/QRC 解密后得到的内容是 LF，
+# 测试做逐字节字符串比较，行尾被转换就会失败——本地 autocrlf=input 时
+# 看不出来，CI 上必现。
+#
+# 这里强制 -text（不做任何行尾转换），让文件在磁盘上与仓库里完全一致。
+
+TestData/Lyrics/*.krc            -text
+TestData/Lyrics/*.qrc            -text
+TestData/Lyrics/*.yrc            -text
+TestData/Lyrics/*.lrc            -text
+TestData/Lyrics/*.ttml           -text
+TestData/Lyrics/*.expected.txt   -text

@@ -13,11 +13,15 @@ on:
     paths:
       - 'FluentFlyout.Lyrics/**'
       - 'FluentFlyout.Lyrics.Probe/**'
+      - 'FluentFlyout.Lyrics.Tests/**'
+      - 'tools/EncryptedFixtureGen/**'
       - '.github/workflows/verify.yml'
   pull_request:
     paths:
       - 'FluentFlyout.Lyrics/**'
       - 'FluentFlyout.Lyrics.Probe/**'
+      - 'FluentFlyout.Lyrics.Tests/**'
+      - 'tools/EncryptedFixtureGen/**'
       - '.github/workflows/verify.yml'
   workflow_dispatch:
     inputs:
@@ -159,3 +163,62 @@ jobs:
           name: vuln-${{ matrix.rid }}
           path: FluentFlyout.Lyrics/vuln-${{ matrix.rid }}.log
           if-no-files-found: ignore
+
+  # ─────────────────────────────────────────────────────────────
+  # J3：单元测试 —— 326 个用例（318 移植 + 8 解密回归）
+  # 这是 P1-9 的验收硬指标：全绿才算移植完成
+  # ─────────────────────────────────────────────────────────────
+  test:
+    name: J3 单元测试
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: 缓存 NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: 还原
+        working-directory: FluentFlyout.Lyrics.Tests
+        run: dotnet restore
+
+      - name: 编译测试项目（警告视为错误）
+        working-directory: FluentFlyout.Lyrics.Tests
+        run: dotnet build -c Release --no-restore -warnaserror
+
+      # TestData 由 csproj 以 PreserveNewest 复制到输出目录，
+      # 测试按 AppContext.BaseDirectory 相对路径读取，不依赖仓库布局。
+      - name: 执行测试
+        working-directory: FluentFlyout.Lyrics.Tests
+        run: dotnet test -c Release --no-build --logger "trx;LogFileName=results.trx" --logger "console;verbosity=normal"
+
+      # 把通过数写进 Job Summary，评审人不必下载 artifact
+      - name: 汇总到 Job Summary
+        if: always()
+        shell: pwsh
+        run: |
+          $trx = Get-ChildItem -Recurse -Filter results.trx -Path FluentFlyout.Lyrics.Tests -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+          if (-not $trx) { "未找到 results.trx" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY; exit 0 }
+          [xml]$doc = Get-Content $trx.FullName -Encoding utf8
+          $c = $doc.TestRun.ResultSummary.Counters
+          "| 总数 | 通过 | 失败 | 跳过 |" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          "|---|---|---|---|"              | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          "| $($c.total) | $($c.passed) | $($c.failed) | $($c.notExecuted) |" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+
+      - name: 归档测试结果
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: FluentFlyout.Lyrics.Tests/**/results.trx
+          if-no-files-found: warn

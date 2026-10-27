@@ -1,0 +1,2 @@
+[1000,1800]encrypted(1000,300)qrc(1300,1500)roundtrip
+[3000,1000]second(3000,500)line
