@@ -8,7 +8,7 @@
 using System.ComponentModel;
 using System.Text.Json.Serialization;
 
-namespace TaskbarLyrics.Core.Models;
+namespace FluentFlyout.Lyrics.Models;
 
 public sealed class LyricDocument
 {

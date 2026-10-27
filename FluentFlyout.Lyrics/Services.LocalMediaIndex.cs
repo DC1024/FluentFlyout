@@ -6,9 +6,9 @@
 // 本仓库整体按 GPL-3.0-or-later 分发。
 
 using System.Collections.Concurrent;
-using TaskbarLyrics.Core.Utilities;
+using FluentFlyout.Lyrics.Utilities;
 
-namespace TaskbarLyrics.Core.Services;
+namespace FluentFlyout.Lyrics.Services;
 
 public enum LocalMediaFileKind
 {

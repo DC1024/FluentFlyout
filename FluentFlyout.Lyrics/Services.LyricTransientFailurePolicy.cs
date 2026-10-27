@@ -10,7 +10,7 @@ using System.Net.Http;
 using System.Net.Sockets;
 using System.Security.Authentication;
 
-namespace TaskbarLyrics.Core.Services;
+namespace FluentFlyout.Lyrics.Services;
 
 internal static class LyricTransientFailurePolicy
 {

@@ -6,10 +6,10 @@
 // 本仓库整体按 GPL-3.0-or-later 分发。
 
 using System.Collections.Concurrent;
-using TaskbarLyrics.Core.Abstractions;
-using TaskbarLyrics.Core.Models;
+using FluentFlyout.Lyrics.Abstractions;
+using FluentFlyout.Lyrics.Models;
 
-namespace TaskbarLyrics.Core.Services;
+namespace FluentFlyout.Lyrics.Services;
 
 public sealed class LyricDiagnosticRunner : IDisposable
 {

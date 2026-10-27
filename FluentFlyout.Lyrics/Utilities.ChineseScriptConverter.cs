@@ -8,7 +8,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace TaskbarLyrics.Core.Utilities;
+namespace FluentFlyout.Lyrics.Utilities;
 
 public static class ChineseScriptConverter
 {

@@ -6,10 +6,10 @@
 // 本仓库整体按 GPL-3.0-or-later 分发。
 
 using System.Globalization;
-using TaskbarLyrics.Core.Utilities;
+using FluentFlyout.Lyrics.Utilities;
 using Xunit;
 
-namespace TaskbarLyrics.Core.Tests;
+namespace FluentFlyout.Lyrics.Tests;
 
 public sealed class LogFileWriterTests
 {

@@ -7,10 +7,10 @@
 
 using System.Collections.Concurrent;
 using System.Text.Json;
-using TaskbarLyrics.Core.Models;
-using TaskbarLyrics.Core.Utilities;
+using FluentFlyout.Lyrics.Models;
+using FluentFlyout.Lyrics.Utilities;
 
-namespace TaskbarLyrics.Core.Services;
+namespace FluentFlyout.Lyrics.Services;
 
 public interface ILyricCacheStore<TPayload>
     where TPayload : class

@@ -6,9 +6,9 @@
 // 本仓库整体按 GPL-3.0-or-later 分发。
 
 using System.Text.RegularExpressions;
-using TaskbarLyrics.Core.Models;
+using FluentFlyout.Lyrics.Models;
 
-namespace TaskbarLyrics.Core.Utilities;
+namespace FluentFlyout.Lyrics.Utilities;
 
 public static class LyricLineNormalizer
 {

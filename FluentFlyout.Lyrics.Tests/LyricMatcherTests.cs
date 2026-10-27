@@ -5,12 +5,12 @@
 // 的 TaskbarLyrics.Core.Tests，原始许可为 MIT（见仓库根目录 LICENSE-TaskbarLyrics）。
 // 本仓库整体按 GPL-3.0-or-later 分发。
 
-using TaskbarLyrics.Core.Models;
-using TaskbarLyrics.Core.Services;
-using TaskbarLyrics.Core.Utilities;
+using FluentFlyout.Lyrics.Models;
+using FluentFlyout.Lyrics.Services;
+using FluentFlyout.Lyrics.Utilities;
 using Xunit;
 
-namespace TaskbarLyrics.Core.Tests;
+namespace FluentFlyout.Lyrics.Tests;
 
 public sealed class LyricMatcherTests
 {

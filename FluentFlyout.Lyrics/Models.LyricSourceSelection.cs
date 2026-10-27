@@ -5,7 +5,7 @@
 // 的 TaskbarLyrics.Core，原始许可为 MIT（见仓库根目录 LICENSE-TaskbarLyrics）。
 // 本仓库整体按 GPL-3.0-or-later 分发。
 
-namespace TaskbarLyrics.Core.Models;
+namespace FluentFlyout.Lyrics.Models;
 
 /// <summary>Enabled online sources in selection order, with an optional resolved-cache scope.</summary>
 public sealed record LyricSourceSelection(

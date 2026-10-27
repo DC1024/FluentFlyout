@@ -9,11 +9,11 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using Lyricify.Lyrics.Models;
-using TaskbarLyrics.Core.Abstractions;
-using TaskbarLyrics.Core.Models;
-using TaskbarLyrics.Core.Utilities;
+using FluentFlyout.Lyrics.Abstractions;
+using FluentFlyout.Lyrics.Models;
+using FluentFlyout.Lyrics.Utilities;
 
-namespace TaskbarLyrics.Core.Services;
+namespace FluentFlyout.Lyrics.Services;
 
 public sealed class LocalLyricProvider : ILyricProvider, IDisposable
 {

@@ -10,7 +10,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 
-namespace TaskbarLyrics.Core.Utilities;
+namespace FluentFlyout.Lyrics.Utilities;
 
 public static class Log
 {

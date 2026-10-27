@@ -8,11 +8,11 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using TaskbarLyrics.Core.Abstractions;
-using TaskbarLyrics.Core.Models;
-using TaskbarLyrics.Core.Utilities;
+using FluentFlyout.Lyrics.Abstractions;
+using FluentFlyout.Lyrics.Models;
+using FluentFlyout.Lyrics.Utilities;
 
-namespace TaskbarLyrics.Core.Services;
+namespace FluentFlyout.Lyrics.Services;
 
 /// <summary>
 /// Persists final lyric resolutions by normalized title and artist.

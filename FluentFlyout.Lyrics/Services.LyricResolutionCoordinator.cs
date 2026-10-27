@@ -6,11 +6,11 @@
 // 本仓库整体按 GPL-3.0-or-later 分发。
 
 using System.Diagnostics;
-using TaskbarLyrics.Core.Abstractions;
-using TaskbarLyrics.Core.Models;
-using TaskbarLyrics.Core.Utilities;
+using FluentFlyout.Lyrics.Abstractions;
+using FluentFlyout.Lyrics.Models;
+using FluentFlyout.Lyrics.Utilities;
 
-namespace TaskbarLyrics.Core.Services;
+namespace FluentFlyout.Lyrics.Services;
 
 public sealed class LyricResolutionCoordinator : ILyricResolutionCoordinator
 {

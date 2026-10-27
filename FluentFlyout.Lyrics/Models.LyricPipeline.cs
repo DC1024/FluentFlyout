@@ -8,7 +8,7 @@
 using System.Collections.ObjectModel;
 using System.Text.Json.Serialization;
 
-namespace TaskbarLyrics.Core.Models;
+namespace FluentFlyout.Lyrics.Models;
 
 public readonly record struct LyricProviderId
 {

@@ -27,7 +27,7 @@ using Xunit;
 using KrcDecrypter = Lyricify.Lyrics.Decrypter.Krc.Decrypter;
 using QrcDecrypter = Lyricify.Lyrics.Decrypter.Qrc.Decrypter;
 
-namespace TaskbarLyrics.Core.Tests;
+namespace FluentFlyout.Lyrics.Tests;
 
 public sealed class LyricsDecryptionTests
 {
