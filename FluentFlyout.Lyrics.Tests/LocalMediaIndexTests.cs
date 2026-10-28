@@ -66,7 +66,9 @@ public sealed class LocalMediaIndexTests
         ILocalMediaIndex index,
         int expectedCount)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        // 10 秒而非 1 秒：这里有真实的临时目录扫描 + 后台建索引，共享 CI runner 上
+        // Defender 扫描新写入的临时文件会把 1 秒预算吃光（master 上正是这个用例超时）。
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (!timeout.IsCancellationRequested)
         {
             var snapshot = index.GetSnapshot();
