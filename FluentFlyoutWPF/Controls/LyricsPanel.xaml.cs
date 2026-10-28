@@ -408,7 +408,22 @@ public partial class LyricsPanel : UserControl
 
         UpdatePureMusicState(frame.IsPureMusic);
         UpdateSecondaryLine(frame);
-        UpdateScan(frame);
+
+        // 进度与排版方向无关，横竖都要记：竖向字形树随时可能被重建，
+        // 重建后要凭这一份把灯补上（见 LyricsPanel.VerticalScan.cs）。
+        TrackVerticalScan(frame);
+
+        if (_isVertical)
+        {
+            // 横向那套遮罩在竖向整块不可见（RootGrid 是 Collapsed），
+            // 但它的状态仍会被写——先归零，省掉每帧对隐藏元素的画刷失效。
+            ResetHorizontalScan();
+        }
+        else
+        {
+            UpdateScan(frame);
+        }
+
         UpdateScroll(frame);
 
         // 竖向要跟着文本重建字形树。
@@ -420,6 +435,9 @@ public partial class LyricsPanel : UserControl
         if (_isVertical)
         {
             EnsureVerticalLayout();
+
+            // 点灯必须校在重建之后：换行会整棵树重来，先点灯会被冲掉。
+            ApplyVerticalScan();
         }
 
         ReportDesiredWidth();
@@ -613,7 +631,26 @@ public partial class LyricsPanel : UserControl
     }
 
     /// <summary>
-    /// 更新逐字扫描。
+    /// 退出横向扫描态：藏起覆盖层、主行恢复常亮。
+    ///
+    /// 只在确实处于扫描态时才动属性——<see cref="ApplyFrame"/> 在竖向每帧
+    /// 都要调一次它（横向那套在竖向不可见，但状态不该留着）。
+    /// </summary>
+    private void ResetHorizontalScan()
+    {
+        if (!_isScanning)
+        {
+            return;
+        }
+
+        PrimaryScanText.Visibility = Visibility.Collapsed;
+        PrimaryText.Opacity = LyricsPanelMetrics.PrimaryOpacity;
+        _isScanning = false;
+        _lastScanProgress = -1;
+    }
+
+    /// <summary>
+    /// 更新横向的逐字扫描（竖向走 <c>LyricsPanel.VerticalScan.cs</c> 的字形块点亮）。
     ///
     /// <c>WordScanProgress</c> 为 null 表示这首歌没有音节数据
     /// （<c>LyricSyncService.CalculateWordScanProgress</c> 在
@@ -628,27 +665,13 @@ public partial class LyricsPanel : UserControl
         // 有一帧带进度，就会先进扫描态再退出来，闪一下。
         if (!WordScanEnabled)
         {
-            if (_isScanning)
-            {
-                PrimaryScanText.Visibility = Visibility.Collapsed;
-                PrimaryText.Opacity = LyricsPanelMetrics.PrimaryOpacity;
-                _isScanning = false;
-                _lastScanProgress = -1;
-            }
-
+            ResetHorizontalScan();
             return;
         }
 
         if (frame.WordScanProgress is not { } progress || progress <= 0)
         {
-            if (_isScanning)
-            {
-                PrimaryScanText.Visibility = Visibility.Collapsed;
-                PrimaryText.Opacity = LyricsPanelMetrics.PrimaryOpacity;
-                _isScanning = false;
-                _lastScanProgress = -1;
-            }
-
+            ResetHorizontalScan();
             return;
         }
 

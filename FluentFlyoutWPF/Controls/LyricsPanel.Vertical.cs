@@ -344,6 +344,11 @@ public partial class LyricsPanel
         _verticalKey = key;
         _verticalContentLength = BuildVerticalTree(
             primary, secondary, primaryFontSize, secondaryFontSize, cross);
+
+        // 刚重建出来的块是常亮态。若此刻正处于点亮态（换行、换字号、
+        // 宿主写短边都可能重建），必须立刻补一次——否则要等下一帧，
+        // 30fps 下就是 33ms 的整列全亮，看得见。
+        ApplyVerticalScan();
     }
 
     /// <summary>
@@ -399,6 +404,7 @@ public partial class LyricsPanel
         VerticalContainer.Children.Clear();
         _verticalPrimaryBlocks.Clear();
         _verticalSecondaryBlocks.Clear();
+        ResetVerticalScanBookkeeping();
 
         var primaryPitch = ColumnPitch(primaryFontSize);
         var secondaryPitch = ColumnPitch(secondaryFontSize);
@@ -477,9 +483,10 @@ public partial class LyricsPanel
                 FontStretch = source.FontStretch,
                 Foreground = source.Foreground,
 
-                // 主行取常量的 0.90 而不是读 PrimaryText.Opacity：
-                // 逐字扫描会把主行压到 0.60，而竖排这一轮没有逐字扫描，
-                // 照抄那个瞬间值会让整列在扫描开始后莫名变暗。
+                // 主行恒从常亮的 0.90 建起，**不读** PrimaryText.Opacity：
+                // 横向的逐字扫描会把主行压到 0.60，照抄那个瞬间值会让整列
+                // 在扫描开始后莫名变暗。竖排的点亮写在每个块自己的 Opacity 上，
+                // 由 LyricsPanel.VerticalScan.cs 每帧改写。
                 Opacity = isPrimary ? LyricsPanelMetrics.PrimaryOpacity : source.Opacity,
 
                 // 宽度 = 沿主轴的步进，高度 = 列距。写死而不是靠 Auto：
@@ -529,6 +536,12 @@ public partial class LyricsPanel
             Canvas.SetTop(block, top);
             VerticalContainer.Children.Add(block);
             blocks.Add(block);
+
+            if (isPrimary)
+            {
+                // 与 _verticalPrimaryBlocks 同增同序：点亮时按同一个下标查字素数。
+                RegisterVerticalPrimaryRun(run.Text);
+            }
 
             x += advance;
         }
@@ -585,6 +598,7 @@ public partial class LyricsPanel
         VerticalContainer.Children.Clear();
         _verticalPrimaryBlocks.Clear();
         _verticalSecondaryBlocks.Clear();
+        ResetVerticalScanBookkeeping();
         _verticalKey = null;
         _verticalContentLength = 0;
         _verticalDocumentLength = 0;
