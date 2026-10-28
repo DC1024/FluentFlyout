@@ -117,6 +117,7 @@ Lyrics are looked up from QQ Music, Kugou, NetEase Cloud Music and LRCLIB, in th
 ## Contributing 💖
 Please feel free to contribute in any way you can! Check out [CONTRIBUTING.md](https://github.com/unchihugo/FluentFlyout/blob/master/.github/CONTRIBUTING.md) to get started.
 If you want to help with translations, please visit our [Weblate page](https://hosted.weblate.org/engage/fluentflyout/).
+If you're touching the lyrics pipeline, read [docs/lyrics-integration/architecture.md](docs/lyrics-integration/architecture.md) first — it documents the layer boundaries and the timing rules that aren't obvious from the code.
 
 ### Translation Status
 <a href="https://hosted.weblate.org/engage/fluentflyout/">
