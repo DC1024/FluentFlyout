@@ -395,8 +395,34 @@ public partial class UserSettings : ObservableObject
     /// <summary>
     /// Widget Target Display
     /// </summary>
+    /// <remarks>
+    /// **已降级为兼容字段**：真正的主键是 <see cref="TaskbarWidgetTargetMonitorId"/>。
+    /// 这里只剩两个用途——旧配置的一次性迁移来源，以及跟随主屏时给设置页一个初始选中位置。
+    /// 不要再拿它去索引 <c>MonitorUtil.GetMonitors()</c>：显示器增删后序号会整体前移，
+    /// 结果是控件静默跑到另一块屏上（这是本字段被替换的原因）。
+    /// </remarks>
     [ObservableProperty]
     public partial int TaskbarWidgetSelectedMonitor { get; set; }
+
+    /// <summary>
+    /// 目标显示器的设备接口路径
+    /// （<c>\\?\DISPLAY#TCL2702#5&amp;2ec52e58&amp;0&amp;UID4355#{接口类GUID}</c>）。
+    /// 空串表示「跟随主显示器」或「尚未从旧序号迁移」。
+    /// </summary>
+    /// <remarks>
+    /// 用设备路径而不是序号/GDI 名字：路径里带着接口实例，换分辨率、改缩放、改相对位置、
+    /// 增删其它显示器都不会变；只有在**换到另一个物理接口**时才会变，
+    /// 那种情况由 <see cref="TaskbarWidgetTargetMonitorSignature"/> 兜底。
+    /// </remarks>
+    [ObservableProperty]
+    public partial string TaskbarWidgetTargetMonitorId { get; set; }
+
+    /// <summary>
+    /// 目标显示器的模糊重连签名（<c>友好名|宽x高|left,top</c>）。
+    /// 设备路径对不上时用它找回「同一块屏」。
+    /// </summary>
+    [ObservableProperty]
+    public partial string TaskbarWidgetTargetMonitorSignature { get; set; }
 
     /// <summary>
     /// Autohide Widget after a few milliseconds after pause 
@@ -928,6 +954,10 @@ public partial class UserSettings : ObservableObject
         VolumeMixerAcrylicWindowEnabled = true;
         TaskbarWidgetEnabled = false;
         TaskbarWidgetSelectedMonitor = 0;
+        // 目标显示器：主键为空 = 跟随主屏。必须显式赋 string.Empty，
+        // 否则老配置反序列化时（元素缺失）这两个字段会是 null，后续直接 NRE。
+        TaskbarWidgetTargetMonitorId = string.Empty;
+        TaskbarWidgetTargetMonitorSignature = string.Empty;
         TaskbarWidgetPosition = 0;
         TaskbarWidgetPadding = true;
         TaskbarWidgetManualPadding = 0;
@@ -1091,6 +1121,22 @@ public partial class UserSettings : ObservableObject
     {
         if (oldValue == newValue || _initializing) return;
         UpdateTaskbar();
+    }
+
+    /// <summary>
+    /// 目标显示器变了（用户在设置页选了另一块屏）。
+    /// </summary>
+    /// <remarks>
+    /// **必须立刻重排**：旧实现没有任何监听，只能等 <c>TaskbarWindow</c> 的 1.5s 定时器
+    /// 发现变化。用户点完下拉框盯着一动不动的旧屏幕一秒半，只会得出「设置没生效」的结论。
+    /// 这里只触发定位，不重刷媒体 UI（那条路在没播放时会把标题刷成 <c>-</c>）。
+    /// </remarks>
+    partial void OnTaskbarWidgetTargetMonitorIdChanged(string oldValue, string newValue)
+    {
+        if (oldValue == newValue || _initializing) return;
+
+        MainWindow mainWindow = (MainWindow)Application.Current.MainWindow;
+        mainWindow.taskbarWindow?.ApplyTargetChange();
     }
 
     partial void OnTaskbarWidgetManualPaddingChanged(int oldValue, int newValue)

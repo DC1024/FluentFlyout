@@ -122,7 +122,12 @@
                         <TextBlock Text="{DynamicResource TaskbarWidgetSelectedMonitorTitle}" FontSize="14" FontWeight="Regular" VerticalAlignment="Center" />
                     </StackPanel>
                 </ui:CardControl.Header>
-                <ComboBox x:Name="TaskbarWidgetSelectedMonitorComboBox" SelectedIndex="{Binding TaskbarWidgetSelectedMonitor, Mode=TwoWay}" IsEnabled="{Binding IsPremiumUnlocked}" Style="{StaticResource DefaultComboBoxStyle}">
+                <!--
+                    不再用 SelectedIndex 直接绑设置里的序号：序号在显示器增删后整体前移，
+                    绑上去等于把「目标是谁」这件事交给一个会漂移的整数。
+                    现在由 code-behind 按设备路径填充与回写（见 RefreshMonitorList）。
+                -->
+                <ComboBox x:Name="TaskbarWidgetSelectedMonitorComboBox" SelectionChanged="MonitorSelectionChanged" IsEnabled="{Binding IsPremiumUnlocked}" Style="{StaticResource DefaultComboBoxStyle}">
                 </ComboBox>
             </ui:CardControl>
 
