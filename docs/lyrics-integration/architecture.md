@@ -167,6 +167,12 @@ flowchart TD
 可用区间来自 UIAutomation 实测的任务栏部件矩形（`GetTaskbarWidgetRect` /
 `GetSystemTrayRect`，带 500 ms 缓存）。测不到时才退回硬编码 216。
 
+**两份 216 是同值不同义，故意不合并成一个常量**（`TaskbarWindow.xaml.cs` 与
+`TaskbarWidgetControl.xaml.cs` 各一份）：前者是「量不到 Widgets 按钮位置时的**兜底偏移**」，
+决定小组件从哪儿开始摆；后者是「量不到可用区间时的**文本预算兜底**」，决定文字最多多宽。
+两者恰好都等于「原生小组件占的宽度」，但将来只调其中一个（比如某个任务栏皮肤下按钮更宽）
+就会静默改坏另一个。真要统一，得先确认两者的变化时机永远一致——目前没有证据支持这一点。
+
 竖向下不扣按钮宽度：竖向的预算方向是主轴（屏幕纵向），而按钮组经反向旋转后也是竖排，
 它的位置由 `TaskbarWindow` 的 `crossPos` 居中处理，不在这个预算里——扣掉会让可用主轴
 长度凭空少一个按钮组。
@@ -216,6 +222,9 @@ UI 入口有两处，都指向同一个值：设置页的歌词页，以及托�
 | 渲染控件 | `FluentFlyoutWPF/Controls/TaskbarWidgetControl.xaml(.cs)`、`LyricsPanel.xaml.cs` | 由上述布局单测覆盖 |
 | 偏移持久化 | `Services.TrackLyricOffsetStore.cs` | `TrackLyricOffsetStoreTests` |
 | XAML 图标名门禁 | `FluentFlyout.Lyrics.Tests/SymbolIconNameTests.cs` | 同文件 |
+
+单帧耗时与分配量见 [perf-baseline.md](perf-baseline.md)；改名或调整调用链后重跑一次，
+看「每帧 1.6 µs / 499 B」是否还在同一量级。
 
 ---
 
