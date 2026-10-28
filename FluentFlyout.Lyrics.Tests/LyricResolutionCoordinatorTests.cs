@@ -28,6 +28,7 @@ public sealed class LyricResolutionCoordinatorTests
         using var coordinator = new LyricResolutionCoordinator(
             [source], [new LyricifyPayloadDecoder()],
             [new PlainTextParser(), new LyricifyPayloadParser()], cache,
+            mappingResolver: new PassThroughMappingResolver(),
             trustPolicy: new LyricProviderTrustPolicy([source.ProviderId], [source.ProviderId]));
 
         var result = await coordinator.ResolveWithResultAsync(track);
@@ -52,6 +53,7 @@ public sealed class LyricResolutionCoordinatorTests
         using var coordinator = new LyricResolutionCoordinator(
             [source], [new LyricifyPayloadDecoder()],
             [new PlainTextParser(), new LyricifyPayloadParser()], cache,
+            mappingResolver: new PassThroughMappingResolver(),
             trustPolicy: new LyricProviderTrustPolicy([source.ProviderId], [source.ProviderId]));
         var track = CreateTrack("Remote Recovery");
         var candidate = CreateCandidate(source.ProviderId,
@@ -83,6 +85,7 @@ public sealed class LyricResolutionCoordinatorTests
             typeof(LyricifyPayloadParser).Assembly.GetName().Version!.ToString(), "2");
         using var coordinator = new LyricResolutionCoordinator(
             [source], [new LyricifyPayloadDecoder()], [new LyricifyPayloadParser()], cache,
+            mappingResolver: new PassThroughMappingResolver(),
             trustPolicy: new LyricProviderTrustPolicy([source.ProviderId], [source.ProviderId]));
 
         var result = await coordinator.ResolveAsync(track);
