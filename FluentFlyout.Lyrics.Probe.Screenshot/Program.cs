@@ -71,8 +71,18 @@ internal static class Program
     private sealed record Variant(string Name, double CrossSize, double FontSize);
 
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
+        // --assembly：只跑「整机装配链」那支（见 VerticalWidgetProbe）。
+        //
+        // 单独一支、而不是并入主矩阵，是为了让 CI 上的失败可归因：
+        // 矩阵红 = 面板自身的排版/朝向坏了；装配链红 = 宿主把尺寸写错了。
+        // 这两类缺陷的修法完全不同，混在一个退出码里会互相掩盖。
+        if (args.Any(a => string.Equals(a, "--assembly", StringComparison.OrdinalIgnoreCase)))
+        {
+            return VerticalWidgetProbe.Run() == 0 ? 0 : 1;
+        }
+
         var outputDirectory = Path.Combine(AppContext.BaseDirectory, "shots");
         if (Directory.Exists(outputDirectory))
         {
@@ -175,8 +185,17 @@ internal static class Program
                 $"墨迹={r.InkPixels}px（应为 0：歌词面板在纯音乐态不可见）");
         }
 
-        // 2. 双行状态必须真的画了两行以上（翻译行 / 下一行）
-        foreach (var r in results.Where(x => x.IsTwoLine))
+        // 2. 双行状态必须真的画了两行（横向）／两列（竖向）
+        //
+        // 横向：两行 → 墨迹高 >= 1.4 倍行高。
+        //
+        // 竖向不能用高度判：一列本来就有 8 个字的长度，无论有没有第二列
+        // 都远超两倍行高，这条会恒真。竖向下「第二行」变成了「第二列」，
+        // 判别量换成宽度——两列比单列宽出「一列距 + 半个字」。
+        //
+        // 但短边装不下两列时（两列要 2 × 1.33 × 字号），面板会按设计
+        // 丢掉译文列保主列，这时没有第二列才是对的，所以那几种组合跳过。
+        foreach (var r in results.Where(x => x.IsTwoLine && !x.IsVertical))
         {
             Check(
                 $"{r.Name}：双行模式画出了 2 行以上",
@@ -184,31 +203,46 @@ internal static class Program
                 $"墨迹高度={r.InkBounds.Height:F1}px，单行高={r.LineHeight:F1}px");
         }
 
-        // 3. 竖向必须换行（不是被压成一行）
+        foreach (var r in results.Where(x => x.IsTwoLine && x.IsVertical && !x.IsPureMusic))
+        {
+            var twoColumnPitch = r.FontSize * LyricsPanel.VerticalColumnPitchFactor * 2;
+
+            if (twoColumnPitch > r.ViewportWidth)
+            {
+                // 短边放不下两列：设计上就该丢译文列，不参与断言。
+                continue;
+            }
+
+            Check(
+                $"{r.Name}：竖向双行画出了第二列",
+                r.InkBounds.Width >= r.FontSize * 1.5,
+                $"墨迹宽={r.InkBounds.Width:F0}px，字号={r.FontSize:F0}px");
+        }
+
+        // 3. 竖向必须成列（不是躺倒、也不是被压成一条横杠）
         //
-        // **判据不能是「墨迹纵向 > 横向」。** 这句断言在单行短歌词上必然失败：
-        // 8 个字在 60 DIP 宽里折成 2 行 × 4 字，包围盒是 52×33——接近正方形，
-        // 宽高比失去判别力。这是本探针第二次踩同一个坑（第一轮在 I/J 方案
-        // 上用多行文本的宽高比判「是否躺倒」，同样失败）。
+        // 逐字竖排下，一句 8 个字的歌词在屏幕上是一条 13 宽 × 138 高的细长条，
+        // 宽高比 1:10。所以「纵向远大于横向」这条判据在这个方案里第一次变得
+        // 可靠——旧方案（抵消旋转 + 折行）的包围盒是 52×33 的近方形，宽高比
+        // 没有判别力，那时只能退而求其次去比「内容宽度 vs 面板宽度」。
+        // 方案换了，判据就该换回来。
         //
-        // 正确的判据是**比较内容宽度与面板宽度**：
-        //   竖向正确 → 折行把内容压到面板宽度内
-        //   竖向错误（没换行）→ 内容远超面板宽度，被 ClipToBounds 裁成一条
-        //
-        // 再补一条「纵向至少两行高」排除「只剩一个字」的退化情况。
+        // 宽度判据保留：列数再多也不能超出短边，否则第二列被 ClipToBounds 切掉。
         //
         // 纯音乐态排除：面板不可见、无文字，方向判断没有意义。
         foreach (var r in results.Where(x => x.IsVertical && x.IsWrapped && !x.IsPureMusic))
         {
             Check(
-                $"{r.Name}：竖向折行到面板宽度内（没被裁）",
+                $"{r.Name}：竖排各列都在短边内（没被裁）",
                 r.InkBounds.Width <= r.ViewportWidth + 1,
-                $"墨迹宽={r.InkBounds.Width:F0}px，面板宽={r.ViewportWidth:F0}px");
+                $"墨迹宽={r.InkBounds.Width:F0}px，短边={r.ViewportWidth:F0}px");
 
             Check(
-                $"{r.Name}：竖向至少两行高（换行生效）",
-                r.InkBounds.Height >= r.LineHeight * 1.4,
-                $"墨迹高={r.InkBounds.Height:F0}px，单行高={r.LineHeight:F1}px");
+                $"{r.Name}：竖向成列（墨迹纵向远大于横向）",
+                r.InkBounds.Height >= r.InkBounds.Width * 2,
+                $"包围盒={r.InkBounds.Width:F0}×{r.InkBounds.Height:F0}" +
+                $"（左上=({r.InkBounds.X:F0},{r.InkBounds.Y:F0})，" +
+                $"画布={r.Bitmap.PixelWidth}×{r.Bitmap.PixelHeight}）");
         }
 
         // 4. 横向模式必须横向延伸（没被误旋转）
@@ -222,11 +256,18 @@ internal static class Program
 
         // 5. 边界矩阵第一条：内容不许被主轴长度上限裁掉。
         //
-        // 判据不能用「墨迹不贴边」：竖排的画布高度按定义等于内容高度，
-        // 文字必然贴住上下边，贴边≠裁切。第一版就是这么写的，42 张全红，
-        // 红的是判据不是渲染。改用布局数值（实测内容高度 vs 分配高度）——
+        // 判据不能用「墨迹不贴边」：竖排的画布长度按定义等于内容长度，
+        // 文字必然贴住两端，贴边≠裁切。第一版就是这么写的，42 张全红，
+        // 红的是判据不是渲染。改用布局数值（面板要的长度 vs 分到的长度）——
         // 这也是生产里真正比较的那两个量。
-        foreach (var r in edgeResults)
+        //
+        // 长句豁免：竖排没有滚动，一列到底的句子一旦超过上限就只能被裁。
+        // 这是这一版明确的取舍（逐字滚动排在后一轮），不是缺陷。所以长句
+        // 不参与断言，只把「裁掉多少」打出来做量化记录——将来接上滚动时，
+        // 这行数字就是验收基线。
+        // 长句豁免只对**竖向**成立：横向有滚动，长句再多也会一行行推过去，
+        // 被裁就是真缺陷。竖向没有滚动，超限只能裁——那是取舍。
+        foreach (var r in edgeResults.Where(x => !(x.IsLongLine && x.IsVertical)))
         {
             Check(
                 $"{r.Name}：内容没被长度上限裁掉",
@@ -236,19 +277,44 @@ internal static class Program
                 $"墨迹高={r.InkBounds.Height:F0}px");
         }
 
-        // 6. 边界矩阵第二条：竖向窄任务栏每行至少两个汉字。
+        foreach (var r in edgeResults.Where(x => x.IsLongLine && x.IsVertical))
+        {
+            Console.WriteLine(
+                $"  [INFO] {r.Name}：长句超限属已知取舍 " +
+                $"（短边={r.CrossSize:F0}，字号={r.FontSize:F1}，" +
+                $"被裁={r.ContentClipped}，墨迹高={r.InkBounds.Height:F0}px）");
+        }
+
+        // 6. 边界矩阵第二条：竖排是**逐字排**，每列一个字宽。
         //
-        // 为什么要有这条：28 DIP 的竖向任务栏，13px 字按字宽折行只剩
-        // **一个字一行**。此时「没被裁」「没被压成横条」全都通过，
-        // 截图矩阵原来的四条判据一条都抓不住——但用户看到的是一条
-        // 竖着排的独字长条。判据用行宽比：一个汉字≈一个字号宽，
-        // 两个汉字≈两倍，取 1.7 作阈值能区分「1 字」与「2 字」。
+        // 这条替换掉了折行时代的「每行至少两个汉字」。旧判据在当时是对的
+        // ——28 DIP 窄栏里 13px 字折行只剩一个字，确实是缺陷。但逐字竖排的
+        // **定义**就是每列一个字：句子变长时增长的是主轴长度，不是列宽。
+        // 沿用旧判据只会得到 19 张「故意失败」的红图（一列 13px < 1.7×13）。
+        //
+        // 新判据守的是另一条底线——字不能挤成一团、列不能探出短边：
+        //   下界 0.75 字号：一列里至少站得下一个完整字
+        //   上界 短边     ：第二列一旦溢出，就会被 ClipToBounds 切掉
+        //
+        // 下界为什么是 0.75 而不是 0.9：
+        //   汉字墨迹本来就比 em 方框小一圈——advance 是 1em，黑墨只占中间
+        //   约 0.85em（CJK 字体两侧留边）。小字号下 ClearType 又把墨迹量化
+        //   到整像素，比例连单调都不是：CI 机器上 13px 量到 12px 墨迹
+        //   （0.92），14px 仍量到 12px（0.86）。0.9 的旧下界正好卡在 0.857
+        //   这条线上，于是 v28-font20 一档 6 张图全红——而那几张的渲染是
+        //   对的（截图里 8 个字竖成一列、笔画完整），错的只是阈值。
+        //   0.75 仍抓得住真正的塌缩：被横向压扁或裁掉一半的字约 0.5em。
         foreach (var r in edgeResults.Where(x => x.IsVertical))
         {
+            const double MinColumnRatio = 0.75;
+            var minColumn = r.FontSize * MinColumnRatio;
+            var ratio = r.FontSize > 0 ? r.InkBounds.Width / r.FontSize : 0;
+
             Check(
-                $"{r.Name}：竖向每行至少两个汉字",
-                r.InkBounds.Width >= 1.7 * r.FontSize,
-                $"行宽={r.InkBounds.Width:F0}px，字号={r.FontSize:F0}px（一个汉字≈{r.FontSize:F0}px）");
+                $"{r.Name}：竖向每列一个字宽，且不探出短边",
+                r.InkBounds.Width >= minColumn && r.InkBounds.Width <= r.ViewportWidth + 1,
+                $"墨迹宽={r.InkBounds.Width:F0}px，字号={r.FontSize:F0}px" +
+                $"（{ratio:P0}），短边={r.ViewportWidth:F0}px");
         }
 
         Console.WriteLine();
@@ -264,7 +330,8 @@ internal static class Program
         LyricDisplayFrame Frame,
         bool IsTwoLine,
         bool IsPureMusic = false,
-        bool IsWrapped = true);
+        bool IsWrapped = true,
+        bool IsLongLine = false);
 
     /// <summary>
     /// 覆盖 P3 全部渲染路径的歌词状态。
@@ -308,14 +375,33 @@ internal static class Program
                 WordScanProgress: 0.45),
             IsTwoLine: true),
 
-        // 长句（横向会触发滚动，竖向会折很多行）
+        // 中英混排：拉丁词必须**整词侧躺**——不拆字母、不逐字母反旋。
+        //
+        // 这条只有逻辑测试（MixedLineKeepsChineseUprightAndLatinWordsWhole）
+        // 还不够：反旋漏挂会渲染成「每个字母正立堆叠」，逻辑层看不出来。
+        // 竖排里拉丁词的处理方式最接近 CSS 的 text-orientation: mixed，一眼能认。
+        //
+        // 句子刻意短：60 宽的竖条里塞 30 多个字符，渲染出来就是一条
+        // 60×220 的细线，别说验收，连字都数不清。混排要验的是**朝向**，
+        // 一个词加几个字足够；也不能短到 4 格——那样包围盒接近正方形，
+        // 「成列」判据自己就失去了判别力。
+        new("mixed-latin",
+            new LyricDisplayFrame(
+                CurrentLine: "Rain 落下 夜色渐浓",
+                NextLine: "",
+                Title: "Mixed"),
+            IsTwoLine: false),
+
+        // 长句（横向会触发滚动；竖向一列到底，超过长度上限就被裁掉——
+        // 竖排不做逐字滚动是这一版的已知取舍，见 IsLongLine 的注释）
         new("long-line",
             new LyricDisplayFrame(
                 CurrentLine: "如果这场雨一直下到明天清晨我们是不是就能一直站在这里不分开",
                 NextLine: "而你说好要陪我走完这条街",
                 Title: "测试曲目",
                 LineProgress: 0.3),
-            IsTwoLine: true),
+            IsTwoLine: true,
+            IsLongLine: true),
 
         // 纯音乐态
         new("pure-music",
@@ -376,58 +462,58 @@ internal static class Program
 
         if (isVertical)
         {
-            // ---------- 竖向：必须复刻生产的两层旋转 ----------
+            // ---------- 竖向：只剩一层旋转，朝向交给字形自己 ----------
             //
-            // TaskbarWindow.PositionWidget 给整个 TaskbarWidgetControl 挂
-            // LayoutTransform(+90)，LyricsPanel 内部再挂 LayoutTransform(-90)
-            // 抵消。少了外层那个 +90，内层的 -90 就没有抵消对象，
-            // 渲染出来是躺倒的——这正是本探针第一版犯的建模错误，
-            // 也是 FluentFlyout.Lyrics.Probe.Render 第二轮 I 方案揭示的同一件事。
+            // 现在的竖排是**逐字排**：面板不再挂 −90 反向旋转，方块字各自带
+            // RenderTransform(−90) 转正，拉丁词整词保持侧躺沿列向下读
+            // （CSS text-orientation: mixed 的做法）。所以这里只需复刻
+            // TaskbarWindow.PositionWidget 的那一层 +90。
             //
-            // 尺寸怎么定，用变换矩阵算清楚（这里绕，但必须算对）：
+            // 尺寸怎么定，用变换矩阵算清楚：
             //
             //   Widget 逻辑 (Ww × Hw) ── +90 ── 屏幕 (Hw × Ww)
-            //   Panel  逻辑 (Wp × Hp) ── −90 ── Widget 内部 (Hp × Wp)
-            //                                  ── Widget +90 ── 屏幕 (Wp × Hp)
             //
-            //   要让 Panel 填满 Widget：Hp = Ww、Wp = Hw。
-            //   竖向 Widget 是 Ww = 主轴长度、Hw = 任务栏宽度，
-            //   所以 Panel 逻辑尺寸 = 任务栏宽度 × 主轴长度。
+            //   要让屏幕上是「宽 = 任务栏宽度、高 = 主轴长度」的一条竖带，
+            //   就得 Hw = crossSize、Ww = 主轴长度。
             //
-            //   结论：Panel.Width = 任务栏宽度，Panel.Height = 主轴长度。
-            //   这样 Panel 内部按「任务栏宽度」排版、文字折行，
-            //   净旋转 0 后屏幕上就是一条 60 宽 × 400 高的竖条。
+            // Panel 与 Widget 同处一个坐标系（没有反向旋转了），于是：
+            //   Panel.Width  = 主轴长度
+            //   Panel.Height = 短边（任务栏宽度）
             //
-            //   第一版探针把两者写反了（Width=主轴长度），结果 Panel 内部
-            //   按 400 宽排版、一行放得下整句，屏幕上只看到两三个字。
+            // 这与 TaskbarWidgetControl.CalculateSize 的写法一致。旧版探针
+            // 是「Panel.Width = 短边、Height = 主轴」——那套语义随折行方案
+            // 一起废除了，照抄旧值现在会把长度当宽度、排出一列被剪断的字。
+            //
+            // 顺序有讲究：短边必须先写。列数与列距都由它决定（两列要
+            // 2.66 × 字号），反过来写的话读到的长度是上一轮的列数。
             panel.SetVerticalMode(true);
+            panel.Height = crossSize;
 
-            var estimate = LyricsVerticalLayout.EstimateMainAxisLength(
-                content: panel.MeasureVerticalContent(),
-                crossSize: crossSize,
-                maxLength: TaskbarWidgetControl.MaxLyricsWidgetLength);
+            var contentLength = panel.VerticalContentLength;
 
-            // Panel 在自身坐标系里：宽 = 任务栏宽度，高 = 主轴长度。
-            // 对齐（Stretch）由 LyricsPanel.SetVerticalMode 自己设置——
-            // 这是生产行为，探针不该代替它。
-            panel.Width = crossSize;
-            panel.Height = estimate;
+            // 内容还没量出来（首帧、空行）时给最小可见长度，
+            // 与 MeasureDesiredWidth 的兜底一致——报 0 会渲染出零宽画布。
+            var mainAxis = contentLength > 0
+                ? Math.Min(contentLength, TaskbarWidgetControl.MaxLyricsWidgetLength)
+                : TaskbarFreeSpaceLayout.MinimumDisplayLength;
+
+            panel.Width = mainAxis;
 
             // Widget 在自身坐标系里：宽 = 主轴长度，高 = 任务栏宽度。
             var widget = new Border
             {
                 Background = new SolidColorBrush(background),
-                Width = estimate,
+                Width = mainAxis,
                 Height = crossSize,
                 Child = panel,
                 LayoutTransform = new RotateTransform(90),
             };
 
-            // 旋转后视觉尺寸是 (任务栏宽度 × estimate)。
+            // 旋转后视觉尺寸是 (任务栏宽度 × 主轴长度)。
             var canvas = new Canvas
             {
                 Width = crossSize,
-                Height = estimate,
+                Height = mainAxis,
                 Background = new SolidColorBrush(background),
             };
             canvas.Children.Add(widget);
@@ -436,7 +522,7 @@ internal static class Program
 
             renderRoot = canvas;
             logicalWidth = crossSize;
-            logicalHeight = estimate;
+            logicalHeight = mainAxis;
         }
         else
         {
@@ -464,33 +550,25 @@ internal static class Program
         renderRoot.Arrange(new Rect(0, 0, logicalWidth, logicalHeight));
         renderRoot.UpdateLayout();
 
-        // 竖向：布局稳定后按**实测内容**兜住估算偏小的一侧，但**不突破上限**。
+        // 布局稳定后再问一次面板要占多长，用来判定「被上限剪掉」。
         //
-        // 复刻生产链路（TaskbarWidgetControl.MeasureDesiredWidth）的两步：
-        //   1. 估算是按宽度除法推的近似值，实际折行由 TextBlock 断行算法决定，
-        //      中文标点禁则会让实际行数多一行 → 取 max(估算, 实测)；
-        //   2. 实测值随后被 Math.Min(measured, MaxLyricsWidgetLength) 夹住。
-        //
-        // 第 2 步就是这次要测的东西：一旦实测超过上限，被夹掉的那部分在屏幕上
-        // 表现为「句子没写完」。原来的探针无上限地把 panel 撑到实测高度，
-        // 恰好把这一步掩盖成「一切正常」——所以这里必须自己算一遍分配值。
+        // 竖排的长度是**排版输入**而不是排版结果（每格步进按实测字宽算），
+        // 所以正常情况下读到的就是上面写进去的那个值。真变长了只有一种
+        // 可能：字体在布局遍里被回退解析换了（缺字 → 别的字体），此时按
+        // 新值放大画布，但仍然不突破 MaxLyricsWidgetLength——那一步正是
+        // 要测的东西：一旦超限，被夹掉的那一截在屏幕上就是「句子没写完」。
         var contentClipped = false;
 
         if (isVertical && renderRoot is Canvas verticalCanvas)
         {
-            var natural = panel.VerticalContentHeight;
-            var allocated = panel.Height;
+            var needed = panel.VerticalContentLength;
+            var allocated = Math.Min(needed, TaskbarWidgetControl.MaxLyricsWidgetLength);
 
-            if (double.IsFinite(natural) && natural > allocated)
+            contentClipped = needed > allocated + 0.5;
+
+            if (allocated > panel.Width + 0.5)
             {
-                allocated = Math.Min(natural, TaskbarWidgetControl.MaxLyricsWidgetLength);
-            }
-
-            contentClipped = double.IsFinite(natural) && natural > allocated + 0.5;
-
-            if (Math.Abs(allocated - panel.Height) > 0.01)
-            {
-                panel.Height = allocated;
+                panel.Width = allocated;
                 verticalCanvas.Height = allocated;
                 logicalHeight = allocated;
 
@@ -507,32 +585,31 @@ internal static class Program
 
         // 诊断：把竖向各层的实际布局尺寸打出来。
         //
-        // 竖向这条链有三层变换（Canvas → Widget(+90) → Panel(−90)），
-        // 光看代码很难判断哪一层的尺寸没生效——直接量 ActualWidth/Height。
-        // 这条输出在本轮定位到两个真实缺陷：
+        // 竖向这条链有两层变换（Canvas → Widget(+90)），光看代码很难判断
+        // 哪一层的尺寸没生效——直接量 ActualWidth/Height。这条输出在本轮
+        // 定位到两个真实缺陷：
         //   1. primary 高 0（Canvas 的 MeasureOverride 恒返回 0，
         //      放开 Height 约束就塌成 0 高，文字被 ClipToBounds 全裁）
         //   2. root 高 > panel 高（估算只算主行，次要行溢出面板）
         // 保留它作为「下次再坏时能一眼看出坏在哪层」的护栏。
+        //
+        // 现在竖向渲染的是 VerticalContainer（RootGrid 已隐藏），
+        // 所以要量的是它；columns 是字形块个数，正常情况下等于列数。
         if (isVertical)
         {
-            var root = panel.FindName("RootGrid") as FrameworkElement;
-            var primary = panel.FindName("PrimaryContainer") as FrameworkElement;
-            var secondary = panel.FindName("SecondaryContainer") as FrameworkElement;
+            var vertical = panel.FindName("VerticalContainer") as FrameworkElement;
 
             // 只在这一组 DPI/主题里打，否则诊断行会把断言结果淹掉。
             if (dpiScale == 1.0 && !isDark && variant is null)
             {
-                var content = panel.MeasureVerticalContent();
+                var columns = vertical is Canvas verticalCanvas2 ? verticalCanvas2.Children.Count : 0;
                 Console.WriteLine(
                     $"  [diag] {state.Name,-12} " +
-                    $"panel={panel.ActualHeight,6:F1} " +
-                    $"content={root?.ActualHeight,6:F1} " +
-                    $"primary={primary?.ActualHeight,6:F1} " +
-                    $"secondary={secondary?.ActualHeight,5:F1} " +
-                    $"| est: pw={content.PrimaryWidth:F1} ph={content.PrimaryLineHeight:F2} " +
-                    $"sw={content.SecondaryWidth:F1} sh={content.SecondaryLineHeight:F2} " +
-                    $"gap={content.Gap:F1} est={panel.Height:F1}");
+                    $"panel={panel.ActualWidth,6:F1}x{panel.ActualHeight,5:F1} " +
+                    $"needs={panel.VerticalContentLength,6:F1} " +
+                    $"canvas={vertical?.ActualWidth,6:F1}x{vertical?.ActualHeight,5:F1} " +
+                    $"columns={columns} " +
+                    $"clip={contentClipped}");
             }
         }
 
@@ -555,7 +632,8 @@ internal static class Program
             // 一行能放几个字」，如果度量层把字号降过，降完的字号才算数。
             crossSize: crossSize,
             fontSize: metrics.FontSize,
-            contentClipped: contentClipped);
+            contentClipped: contentClipped,
+            backgroundColor: background);
     }
 
     private static ShotResult Measure(
@@ -568,7 +646,8 @@ internal static class Program
         double viewportWidthPx,
         double crossSize,
         double fontSize,
-        bool contentClipped)
+        bool contentClipped,
+        Color backgroundColor)
     {
         var stride = bitmap.PixelWidth * 4;
         var pixels = new byte[stride * bitmap.PixelHeight];
@@ -576,8 +655,15 @@ internal static class Program
 
         // 墨迹判据：与背景的**亮度差**超过阈值即视为文字。
         // 不能用绝对亮度——深色主题下文字是白的、背景是黑的，
-        // 浅色主题正好相反。用「与角落背景色的差」两头都适用。
-        var bgLuminance = Luminance(pixels, stride, 0, 0);
+        // 浅色主题正好相反。用「与背景色的差」两头都适用。
+        //
+        // 背景色用**探针自己写进画布的那个值**，不去采角落像素：
+        // 竖排的字形块从 x=0 起排，一旦某个块溢到左上角，采到的基准
+        // 就变成文字色，整张图会被判成「满是墨迹」——mixed-latin 就这样
+        // 误报过一次（浅色宽 60、深色宽 13，同一份布局两种结论）。
+        var bgLuminance = (0.299 * backgroundColor.R)
+            + (0.587 * backgroundColor.G)
+            + (0.114 * backgroundColor.B);
 
         var minX = int.MaxValue;
         var minY = int.MaxValue;
@@ -590,6 +676,13 @@ internal static class Program
             for (var x = 0; x < bitmap.PixelWidth; x++)
             {
                 var offset = y * stride + x * 4;
+
+                // 完全透明的像素在画布之外，无所谓墨迹。
+                if (pixels[offset + 3] == 0)
+                {
+                    continue;
+                }
+
                 var luminance = Luminance(pixels, stride, x, y);
 
                 if (Math.Abs(luminance - bgLuminance) < 40)
@@ -619,6 +712,7 @@ internal static class Program
             IsTwoLine = state.IsTwoLine,
             IsWrapped = state.IsWrapped,
             IsPureMusic = state.IsPureMusic,
+            IsLongLine = state.IsLongLine,
             IsDark = isDark,
             LineHeight = lineHeightPx,
             DpiScale = dpiScale,
@@ -632,9 +726,24 @@ internal static class Program
     private static double Luminance(byte[] pixels, int stride, int x, int y)
     {
         var offset = (y * stride) + (x * 4);
-        var b = pixels[offset];
-        var g = pixels[offset + 1];
-        var r = pixels[offset + 2];
+
+        // **必须反预乘**：目标格式是 Pbgra32，RGB 已经被 alpha 乘过。
+        // 直接拿预乘值算亮度，一条 alpha≈0.6 的边界行会被压到 148
+        // （0.6 × 0xF3），在浅色底上就成了「墨迹」——可它肉眼完全看不见。
+        // mixed-latin 就这样误报过：浅色主题下墨迹横贯整宽 60px，
+        // 深色主题同一份布局只有 13px，看着像渲染 bug，其实是判据 bug。
+        // PNG 里那一行读出来是 241（编码器做过反预乘），对照像素时才露馅。
+        var alpha = pixels[offset + 3];
+        if (alpha == 0)
+        {
+            return 0;
+        }
+
+        var scale = 255.0 / alpha;
+        var b = pixels[offset] * scale;
+        var g = pixels[offset + 1] * scale;
+        var r = pixels[offset + 2] * scale;
+
         return ((r * 299) + (g * 587) + (b * 114)) / 1000.0;
     }
 
@@ -669,16 +778,24 @@ internal static class Program
         public required bool IsTwoLine { get; init; }
         public required bool IsWrapped { get; init; }
         public required bool IsPureMusic { get; init; }
+
+        /// <summary>
+        /// 是否是「一列到底装不下」的长句。
+        ///
+        /// 竖排不做逐字滚动，长句超出主轴上限就只能被裁。这是本版已知取舍，
+        /// 所以这类用例不参与「不许裁」的断言，改为一律打印裁切量。
+        /// </summary>
+        public required bool IsLongLine { get; init; }
+
         public required bool IsDark { get; init; }
         public required double LineHeight { get; init; }
         public required double DpiScale { get; init; }
 
         /// <summary>
-        /// 折行视口宽度（**物理像素**）。
+        /// 跨列方向的可用宽度（**物理像素**），也就是任务栏短边。
         ///
-        /// 竖向时内容被折行到「任务栏宽度」这条边，所以墨迹宽度不应超过它。
-        /// 用它做判据比「墨迹纵向 &gt; 横向」可靠：后者在短句折成两行时
-        /// 包围盒接近正方形，宽高比失去判别力（本探针踩过两次）。
+        /// 竖排时字形沿列排、列沿短边铺开（最多两列），所以墨迹宽度不应
+        /// 超过它——超了就是第二列被 ClipToBounds 切掉了。
         /// </summary>
         public required double ViewportWidth { get; init; }
 
@@ -691,8 +808,8 @@ internal static class Program
         /// <summary>
         /// 内容是否被「主轴长度上限」裁掉了一部分。
         ///
-        /// 由布局数值判定（实测内容高度 &gt; 分配高度），不看像素：
-        /// 竖排时画布高度就是内容高度，墨迹必然贴边，像素判据区分不出
+        /// 由布局数值判定（面板要的长度 &gt; 分到的长度），不看像素：
+        /// 竖排时画布长度就是内容长度，墨迹必然贴住两端，像素判据区分不出
         /// 「刚好填满」和「被切掉一截」。
         /// </summary>
         public required bool ContentClipped { get; init; }

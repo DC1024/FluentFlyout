@@ -286,6 +286,15 @@ jobs:
         working-directory: FluentFlyout.Lyrics.Probe.Screenshot
         run: dotnet run -c Release --no-build
 
+      # 整机装配链：渲染真实的 TaskbarWidgetControl，面板的短边与主轴长度
+      # 只能来自生产方法 CalculateSize（矩阵则是夹具直接写宽度）。
+      #
+      # 为什么单列一步：两类失败的修法完全不同——矩阵红 = 面板自身的排版
+      # 或朝向坏了；这一步红 = 宿主把尺寸写错了。混在一个退出码里会互相掩盖。
+      - name: 整机装配链（尺寸由 CalculateSize 写入）
+        working-directory: FluentFlyout.Lyrics.Probe.Screenshot
+        run: dotnet run -c Release --no-build -- --assembly
+
       # 把断言汇总写进 Job Summary，评审人不必下载 artifact
       - name: 汇总到 Job Summary
         if: always()
@@ -315,5 +324,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: lyrics-screenshots
-          path: FluentFlyout.Lyrics.Probe.Screenshot/bin/Release/**/shots/*.png
+          path: |
+            FluentFlyout.Lyrics.Probe.Screenshot/bin/Release/**/shots/*.png
+            FluentFlyout.Lyrics.Probe.Screenshot/bin/Release/**/assembly/*.png
           if-no-files-found: warn

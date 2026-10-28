@@ -180,36 +180,46 @@ flowchart TD
 任务栏方位变了由 `TaskbarWindow` 调 `Widget.SetVerticalMode(isVertical)` 触发重排；
 混合 DPI 由 `TaskbarWindow.xaml.cs` / `MainWindow.xaml.cs` 里的 `WM_DPICHANGED` 处理。
 
-### 5.1 竖向折行宽度：装配链上唯一不会自愈的一环
+### 5.1 竖向短边：装配链上唯一不会自愈的一环
 
-竖向下 `LyricsPanel.Width` **必须由宿主写入**，值取 `CalculateSize` 返回的 `logicalHeight`
-（40 / 28 DIP，与 `LyricsMetricsPolicy.DefaultTaskbarCrossSize` / `SmallTaskbarCrossSize` 同源）。
+竖排面板的 `Width` 是**主轴长度**、`Height` 是**可用短边**（任务栏宽度）。
+后者**必须由宿主写入**，值取 `CalculateSize` 里按 `logicalHeight` 推出的可用短边
+（标准 40 / 小任务栏 28 DIP 减去边框与内缩，与
+`LyricsMetricsPolicy.DefaultTaskbarCrossSize` / `SmallTaskbarCrossSize` 同源）。
 
-这一条之所以要单独写，是因为**断了不会有任何报错，只会「一个字都看不见」**：
+这一条之所以要单独写，是因为**断了不会有任何报错，只会「一个字形都排不出来」**：
 
 ```
 面板根是 HorizontalAlignment=Left 的 UserControl，内容全在 Canvas 里
 Canvas.MeasureOverride 恒返回 (0,0)
   → 放在 Width="Auto" 的横向 StackPanel（MainStackPanel）里，排列宽度 = 内容期望宽度 = 0
-  → ActualWidth = 0 → ResolveVerticalViewport() = 0
-  → UpdateVerticalWrapLayout() 首行早退，Container 高度停在 XAML 的值、TextBlock.Width 仍是 NaN
-  → ClipToBounds=True 把文字整块剪掉
+  → ActualHeight = 0 → ResolveVerticalCross() = 0
+  → EnsureVerticalLayout() 打一条 Debug 后早退，VerticalContainer 里一个 TextBlock 都没有
+  → ClipToBounds=True，屏幕上只剩一块空面板
   → SizeChanged 不会来救：尺寸从 0 到 0 不触发
 ```
 
-也就是说，**没有任何环会把宽度补上**。曾经 `CalculateSize` 用 `&& !_isVertical` 跳过这次赋值、
-以为面板能从自身 `ActualWidth` 取到折行宽度，结果竖向任务栏整条路径静默失效
-（顶部/底部正常，左侧/右侧空白）。视觉验收矩阵没抓到，因为那套夹具直接给面板写了宽度，
-**绕过了生产路径的取宽度方式**——这也是「夹具通过 ≠ 真机通过」的一个具体案例。
+也就是说，**没有任何环会把短边补上**。曾经 `CalculateSize` 用 `&& !_isVertical` 跳过
+这次赋值、以为面板能从自身 `ActualHeight` 取到短边，结果竖向任务栏整条路径静默失效
+（顶部/底部正常，左侧/右侧空白）。视觉验收矩阵没抓到，因为那套夹具直接给面板写了尺寸，
+**绕过了生产路径写入短边的方式**——这也是「夹具通过 ≠ 真机通过」的一个具体案例。
 
-运行期判据：日志里出现 `Vertical lyrics: wrap viewport is 0` 就说明这条链断了。
-正常情况下它最多出现一次（首次布局前），随后被宿主写入宽度后的 `SizeChanged` 覆盖。
+运行期判据：日志里出现 `Vertical lyrics: cross size is 0` 就说明这条链断了。
+正常情况下它最多出现一次（首次布局前），随后被宿主写入短边后的 `SizeChanged` 覆盖。
+
+另一条同源判据是 `Vertical lyrics: two columns need … but only … is available`。
+它说明短边确实装不下两列（`2 × 1.33 × 字号`），面板按设计丢掉译文列、保住主列——
+这不是缺陷而是取舍，但值得在日志里能看见。
 
 这条链现在还有一层自动化护栏：`TaskbarVerticalLyricsWiringTests` 在 STA 线程上构造
 **真实的** `TaskbarWidgetControl`，按生产顺序（`SetLyricsMode` → `SetVerticalMode` →
-`CalculateSize`）走一遍，断言 `LyricsPanel.Width` 落在 40 / 28 DIP（小任务栏 28）。
-它盯的是「宽度有没有被写进去」，不是「排版好不好看」——后者仍归截图矩阵。
-把 `ApplyVerticalLyricsPanelWidth` 那行注释掉，4 个用例里 3 个立刻红，说明这条护栏是有效的。
+`CalculateSize`）走一遍，断言 `LyricsPanel.Height` 落在可用短边（小任务栏更小）。
+它盯的是「短边有没有被写进去」，不是「排版好不好看」——后者仍归截图矩阵。
+把 `ApplyVerticalLyricsPanelCross` 那行注释掉，相关的几个用例立刻红，说明这条护栏是有效的。
+
+> **语义变更提醒**：逐字竖排这一版把 `Width` / `Height` 的语义**整套互换**过。
+> 旧方案里 `Width` 是折行宽度、`Height` 是主轴长度；现在是 `Width` 主轴、`Height` 短边。
+> 改这条链时先确认自己手里拿的是哪一个——两个都叫「宽高」，混用没有任何编译期报错。
 
 ---
 

@@ -78,32 +78,6 @@ public partial class LyricsPanel : UserControl
     private string _cachedMeasuredText = string.Empty;
     private double _cachedMeasuredFontSize = -1;
 
-    /// <summary>
-    /// 折行高度的量尺：一个不进可视树的 <see cref="TextBlock"/>。
-    ///
-    /// <para>
-    /// <b>为什么不用 <see cref="FormattedText"/></b>：两者的断行策略不同。
-    /// <c>FormattedText</c> 只在**词边界**折行，单个词比 <c>MaxTextWidth</c>
-    /// 还宽时它宁可让词溢出也不切词，仍算一行；<see cref="TextBlock"/> 的
-    /// <see cref="TextWrapping.Wrap"/> 会把超宽词切开（"screen" → "scree" + "n"）。
-    /// 竖排任务栏的折行宽度只有 37.5 DIP，英文词几乎全部超宽，于是
-    /// 同一段文本 <c>FormattedText</c> 量出 7 行、<c>TextBlock</c> 实际排 9 行
-    /// ——容器矮两行，尾巴被 <c>ClipToBounds</c> 剪掉，屏幕上表现为
-    /// 「句子在半个词上断掉」（实测："…like a midni"，后面的 "ght sea" 全没了）。
-    /// </para>
-    /// <para>
-    /// 量尺是**同一个控件类型**，断行规则天然一致；它不参与布局，只
-    /// <see cref="UIElement.Measure"/> 一次读 <c>DesiredSize</c>，成本与原来的
-    /// <c>FormattedText</c> 同量级，且只在换行时调用（见 <see cref="ApplyFrame"/>）。
-    /// </para>
-    /// </summary>
-    private readonly TextBlock _wrapProbe = new()
-    {
-        // 刻意**不**设 Visibility.Collapsed：Collapsed 的元素 Measure 出来
-        // 恒为 (0,0)。它不挂在可视树上，Visible 也不会被渲染。
-        TextWrapping = TextWrapping.Wrap,
-    };
-
     /// <summary>累积的降级次数，供诊断与设置界面展示。</summary>
     public int DowngradeCount { get; private set; }
 
@@ -161,8 +135,9 @@ public partial class LyricsPanel : UserControl
     public Color? UserPrimaryColor { get; set; }
 
     /// <summary>
-    /// 用户指定的对齐方式。竖向排版走 <c>TextAlignment</c>，
-    /// 横向走 <see cref="LyricsAlignmentPolicy"/> 算出的位移。
+    /// 用户指定的对齐方式。只作用于横向排版（由
+    /// <see cref="LyricsAlignmentPolicy"/> 换算成位移）；竖排的列位置固定，
+    /// 宿主在竖向也强制左对齐。
     /// </summary>
     public LyricsTextAlignment Alignment { get; set; } = LyricsTextAlignment.Left;
 
@@ -231,17 +206,16 @@ public partial class LyricsPanel : UserControl
 
         PrimaryScanText.OpacityMask = _scanMask;
 
-        // 竖向模式下折行宽度/高度要跟着面板宽度走。
+        // 竖向时列数由可用短边决定：宿主写面板 Height 会走到这里。
         //
-        // 订阅**面板自身**的 SizeChanged 而不是 PrimaryContainer 的：
-        // 后者的高度正是由 UpdateVerticalWrapLayout 写进去的，
-        // 用它当触发源会形成自触发循环（写高度 → SizeChanged →
-        // 再写高度），而面板宽度是宿主给的、外部输入，没有这个问题。
+        // 订阅**面板自身**的 SizeChanged 而不是 VerticalContainer 的：
+        // 画布的子项是字形块，建树本身不会改变面板尺寸（Canvas 的
+        // MeasureOverride 恒返回 0），所以这里不存在自触发循环。
         SizeChanged += (_, _) =>
         {
             if (_isVertical)
             {
-                UpdateVerticalWrapLayout();
+                EnsureVerticalLayout();
             }
         };
 
@@ -307,8 +281,9 @@ public partial class LyricsPanel : UserControl
     /// 按当前字号把整首歌词重新量一遍，取最宽的一句。
     ///
     /// <para>
-    /// 竖向不算：竖向的宽度被任务栏宽度钉死，能协商的是主轴长度，
-    /// 走的是 <see cref="MeasureVerticalContent"/>，这里量了也用不上。
+    /// 竖向不算：竖排是逐字沿主轴排的，短边被任务栏钉死，
+    /// 能协商的是主轴长度（走 <see cref="VerticalContentLength"/>），
+    /// 这里量出来的宽度在竖向没有任何去处。
     /// </para>
     /// </summary>
     private void RecalculateDocumentWidth()
@@ -333,66 +308,6 @@ public partial class LyricsPanel : UserControl
     public LyricsPanelMetrics Metrics => _metrics;
 
     /// <summary>
-    /// 竖向估算主轴长度所需的两行实测内容。
-    ///
-    /// <b>为什么不能只给 <see cref="DesiredContentWidth"/></b>：竖向有
-    /// 当前行 + 翻译/下一行两行**各自独立折行**的文本，只按主行估长度
-    /// 会漏掉次要行整块。截图矩阵实测双行状态估 29.9 DIP、实际要 63.4 DIP，
-    /// 少算一半，次要行被裁掉一整行。
-    ///
-    /// 行高给的是 <b>FormattedText 实测值</b>而不是 <c>Metrics.LineHeight</c>：
-    /// 后者是「字号 × 1.15」的名义值（13px → 14.95），而 WPF 实际行高
-    /// 是 16.5 DIP，差 10%。用名义值估算会让每行都少算 1.5 DIP。
-    /// </summary>
-    public LyricsVerticalContent MeasureVerticalContent()
-    {
-        if (!_hasMetrics)
-        {
-            return default;
-        }
-
-        var primaryText = PrimaryText.Text ?? string.Empty;
-        var primaryWidth = primaryText.Length > 0
-            ? MeasureText(primaryText, _metrics.FontSize)
-            : 0;
-
-        // 次要行只在「真的会画」时才算。单行模式下 SecondaryContainer
-        // 是 Collapsed，把它算进去会让面板白占一行高度。
-        var secondaryText = SecondaryText.Text ?? string.Empty;
-        var hasSecondary = !_metrics.IsSingleLine &&
-            SecondaryContainer.Visibility == Visibility.Visible &&
-            !string.IsNullOrWhiteSpace(secondaryText);
-
-        var secondaryWidth = hasSecondary
-            ? MeasureText(secondaryText, _metrics.TranslationFontSize)
-            : 0;
-
-        return new LyricsVerticalContent(
-            PrimaryWidth: primaryWidth,
-            PrimaryLineHeight: MeasureLineHeight(_metrics.FontSize),
-            SecondaryWidth: secondaryWidth,
-            SecondaryLineHeight: hasSecondary
-                ? MeasureLineHeight(_metrics.TranslationFontSize)
-                : 0,
-            Gap: hasSecondary ? _metrics.Gap : 0);
-    }
-
-    /// <summary>
-    /// 量出该字号下单行文本的实际高度（DIP）。
-    ///
-    /// 用一个固定的单字符量：行高由字体度量（ascent+descent+lineGap）决定，
-    /// 与内容无关，所以量一个字就够，且不会被空文本或超长文本干扰。
-    /// </summary>
-    private double MeasureLineHeight(double fontSize)
-    {
-        var height = MeasureWrappedHeight("字", fontSize, double.PositiveInfinity);
-
-        // FormattedText 在 MaxTextWidth 为无穷时正常返回；
-        // 万一异常返回 0，退回名义行高兜底。
-        return height > 0 ? height : fontSize * LyricsPanelMetrics.LineHeightFactor;
-    }
-
-    /// <summary>
     /// 应用度量。会调整字号与行高，<b>因此会触发一次重排</b>——
     /// 只应在尺寸/字号/DPI 变化时调用，不要放进帧循环。
     /// </summary>
@@ -405,19 +320,11 @@ public partial class LyricsPanel : UserControl
         PrimaryScanText.FontSize = metrics.FontSize;
         SecondaryText.FontSize = metrics.TranslationFontSize;
 
-        if (_isVertical)
-        {
-            // 竖向时高度不能钉死：换行后行数由「视口宽度 ÷ 折行点」决定，
-            // 不是度量能预知的。具体高度由 UpdateVerticalWrapLayout
-            // 按实测折行结果写回（见该方法里关于 Canvas 塌成 0 高的说明）。
-            PrimaryContainer.Height = double.NaN;
-            SecondaryContainer.Height = double.NaN;
-        }
-        else
-        {
-            PrimaryContainer.Height = metrics.LineHeight;
-            SecondaryContainer.Height = metrics.LineHeight;
-        }
+        // 横向两行的高度是度量的名义行高；竖向的 RootGrid 整块 Collapsed，
+        // 这里写什么都不会被排到，竖排的字形块按列距自己定高
+        // （见 LyricsPanel.Vertical.cs）。
+        PrimaryContainer.Height = metrics.LineHeight;
+        SecondaryContainer.Height = metrics.LineHeight;
 
         if (metrics.IsSingleLine)
         {
@@ -426,10 +333,7 @@ public partial class LyricsPanel : UserControl
         }
         else
         {
-            // 竖向的行高由折行结果决定（Auto），横向是固定 LineHeight。
-            SecondaryRow.Height = _isVertical
-                ? GridLength.Auto
-                : new GridLength(metrics.LineHeight);
+            SecondaryRow.Height = new GridLength(metrics.LineHeight);
             SecondaryContainer.Margin = new Thickness(0, metrics.Gap, 0, 0);
         }
 
@@ -444,11 +348,10 @@ public partial class LyricsPanel : UserControl
         // 否则用户把字号从 13 调到 20，胶囊还停在旧宽度上，长句会被裁。
         RecalculateDocumentWidth();
 
-        // 竖向时字号变化会改变折行位置：视口宽度没变，但折行点与行数都变了，
-        // 必须重新量一次折行高度。SizeChanged 不会触发（宽度确实没变）。
+        // 竖向的列数、列距、每格步进全部由字号推出来：字号一变整棵树作废。
         if (_isVertical)
         {
-            UpdateVerticalWrapLayout();
+            EnsureVerticalLayout();
         }
     }
 
@@ -504,19 +407,19 @@ public partial class LyricsPanel : UserControl
         }
 
         UpdatePureMusicState(frame.IsPureMusic);
-        var secondaryChanged = UpdateSecondaryLine(frame);
+        UpdateSecondaryLine(frame);
         UpdateScan(frame);
         UpdateScroll(frame);
 
-        // 竖向时行数由文本决定：换行/换翻译都会改变折行高度，
-        // 必须重量一次并写回 Canvas 高度，否则新行会被裁掉。
+        // 竖向要跟着文本重建字形树。
         //
-        // 只在文本真的变了时做。这里是 30fps 热路径，
-        // 每次 FormattedText 折行测量是几十微秒的固定开销，
-        // 无条件调用等于把「不重排」的设计全部作废。
-        if (_isVertical && (primaryChanged || secondaryChanged))
+        // 无条件调用而不是「只在文本变了时」：纯音乐态/清空会在
+        // UpdateSecondaryLine 之后又把文本抹掉，靠布尔标记判断容易漏一次
+        // （漏的后果是歌词停在上一句，截图上看不出来）。
+        // EnsureVerticalLayout 自己用输入做键，没变就是一次字符串比较。
+        if (_isVertical)
         {
-            UpdateVerticalWrapLayout();
+            EnsureVerticalLayout();
         }
 
         ReportDesiredWidth();
@@ -572,12 +475,12 @@ public partial class LyricsPanel : UserControl
             return;
         }
 
-        // 竖向模式下文本是换行的，横向偏移毫无意义——会把换行后的
-        // 整块内容推出视口。这里直接归零并返回。
+        // 竖排不走位移滚动：字形是从主轴起点逐格排下去的，
+        // 一列的容量（字号 13 时 44 字）本来就装得下整句，再横向位移
+        // 只会把已经排好的列推出画布。这里归零并返回。
         //
-        // 注意：这里说的「竖向」是**面板自身被反向旋转抵消之后**的状态。
-        // 抵消之后坐标系回到屏幕坐标，PrimaryContainer 的宽度对应屏幕上的
-        // 纵向延伸；换行已经让内容完整可见，再横向滚动只会把行推出去。
+        // 竖向的超长句处理见 LyricsPanel.Vertical.cs：超出可用主轴长度的部分
+        // 被面板的 ClipToBounds 裁掉，与横向「先滚动、后变宽」是两种取舍。
         if (_isVertical)
         {
             if (Math.Abs(transform.X) > 1e-6)
@@ -585,8 +488,8 @@ public partial class LyricsPanel : UserControl
                 transform.X = 0;
             }
 
-            // 竖向的对齐由 TextAlignment 负责（宽度被钉成视口宽度），
-            // 覆盖层的位移也要一起归零，否则会与 TextAlignment 叠加成双倍偏移。
+            // 覆盖层此时不可见（RootGrid 整块 Collapsed），一并归零，
+            // 免得切回横向时带着上一次的偏移。
             SyncScanTransform(0);
 
             return;
@@ -658,7 +561,7 @@ public partial class LyricsPanel : UserControl
     /// - 有翻译且用户开着翻译 → 显示当前行的翻译（用户开翻译就是想看它）；
     /// - 其余 → 显示下一行预览，用次要色区分。
     /// </summary>
-    /// <returns>次要行文本是否变化。竖向折行需要据此决定要不要重新量高度。</returns>
+    /// <returns>次要行文本是否变化（供 <see cref="RefreshSecondaryLineLayout"/> 之类的诊断路径用）。</returns>
     private bool UpdateSecondaryLine(LyricDisplayFrame frame)
     {
         if (_hasMetrics && _metrics.IsSingleLine)
@@ -692,7 +595,7 @@ public partial class LyricsPanel : UserControl
     ///
     /// 提取出来是因为 <see cref="UpdateSecondaryLine"/> 有三个分支，
     /// 每个分支都要做同样的「比较-赋值-记变化」三步；散在四处
-    /// 极易漏掉一处，而漏掉的后果是竖向折行高度不更新（行被裁掉）。
+    /// 极易漏一处，而漏的后果是某个分支忘了改可见性（竖排于是多排一列空列）。
     /// </summary>
     private bool SetSecondaryText(string text, double opacity, bool visible)
     {
@@ -970,7 +873,19 @@ public partial class LyricsPanel : UserControl
         return Math.Max(primaryWidth, secondaryWidth);
     }
 
-    private double MeasureText(string? text, double fontSize)
+    private double MeasureText(string? text, double fontSize) =>
+        MeasureText(text, fontSize, PrimaryText.FontWeight);
+
+    /// <summary>
+    /// 按指定字重量文本宽度（DIP）。
+    ///
+    /// <para>
+    /// 字重是单独一个参数的唯一原因：竖排里主行是 Medium、译文行是 Normal，
+    /// 而每格沿主轴的步进就是这一格的文本宽度。用主行的字重量译文，
+    /// 拉丁词会差半个字的宽度，几十格累下来尾部会被裁掉一截。
+    /// </para>
+    /// </summary>
+    private double MeasureText(string? text, double fontSize, FontWeight fontWeight)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -982,7 +897,7 @@ public partial class LyricsPanel : UserControl
             var typeface = new Typeface(
                 PrimaryText.FontFamily,
                 PrimaryText.FontStyle,
-                PrimaryText.FontWeight,
+                fontWeight,
                 PrimaryText.FontStretch);
 
             var formatted = new FormattedText(
@@ -1048,6 +963,10 @@ public partial class LyricsPanel : UserControl
         PrimaryText.Foreground = new SolidColorBrush(primary);
         PrimaryScanText.Foreground = new SolidColorBrush(scanOverlay);
         SecondaryText.Foreground = new SolidColorBrush(translation);
+
+        // 竖排的字形块各自持有画笔引用，换主题时必须一起重涂——
+        // 它们不会自动跟着源 TextBlock 走（见 LyricsPanel.Vertical.cs）。
+        SyncVerticalPalette();
     }
 
     /// <summary>
@@ -1064,9 +983,15 @@ public partial class LyricsPanel : UserControl
     /// <summary>
     /// 设置文本对齐方式。
     ///
-    /// 竖向与横向的实现方式不同，原因见 <see cref="LyricsAlignmentPolicy"/>：
-    /// 竖向的 <c>TextBlock.Width</c> 被钉成视口宽度（换行需要），
-    /// 所以直接设 <c>TextAlignment</c>；横向宽度是 Auto，只能靠位移。
+    /// 竖向与横向的实现方式不同：横向的 <c>TextBlock.Width</c> 是 Auto，
+    /// <c>TextAlignment</c> 不起作用，位置只能靠位移；横向一律左对齐。
+    ///
+    /// <para>
+    /// 竖向这套已经用不上了——逐字竖排的字形块各占一格，主列居右、译文列在左，
+    /// 对齐由列的位置决定（见 <c>LyricsPanel.Vertical.cs</c>），
+    /// 宿主对竖向也强制左对齐。这里保留写入只是让三个源 TextBlock 的状态
+    /// 与 <see cref="Alignment"/> 保持一致，切回横向时不需要再补一次。
+    /// </para>
     /// </summary>
     public void SetAlignment(LyricsTextAlignment alignment)
     {
@@ -1080,7 +1005,7 @@ public partial class LyricsPanel : UserControl
 
         // 横向的位移由 UpdateScroll 每帧算，这里只触发一次重算：
         // 用当前帧重放一遍即可（帧内容没变，只是对齐变了）。
-        // 竖向没有待处理的位移，SetVerticalMode 的 Width 已经就位。
+        // 竖向没有待处理的位移。
         if (!_isVertical && _frame is { } frame)
         {
             UpdateScroll(frame);
@@ -1088,35 +1013,25 @@ public partial class LyricsPanel : UserControl
     }
 
     /// <summary>
-    /// 按当前方向把对齐写到三个 <c>TextBlock</c> 上。
+    /// 把三个源 <c>TextBlock</c> 的对齐一律写成 Left。
     ///
-    /// <b>横向一律写 Left，竖向才用 <see cref="Alignment"/></b>。
-    /// 两个方向必须分工，不能都设：
-    /// <list type="bullet">
-    /// <item>横向的 <c>TextBlock.Width</c> 是 Auto（等于文本宽度），
-    /// <c>TextAlignment</c> 在这种宽度下没有可见效果；位置全靠
-    /// <see cref="LyricsAlignmentPolicy"/> 算出的位移。</item>
-    /// <item>竖向的 <c>Width</c> 被钉成视口宽度，<c>TextAlignment</c> 才真正生效，
-    /// 而位移恒为 0。</item>
-    /// </list>
-    /// 若横向也设成 Center/Right，一旦某条路径把 <c>Width</c> 撑开
-    /// （例如后续给长句滚动加固定视口宽度），就会与位移叠加成双倍偏移——
+    /// <para>
+    /// 横向的 <c>Width</c> 是 Auto（等于文本宽度），<c>TextAlignment</c> 在这种
+    /// 宽度下没有可见效果；位置全靠 <see cref="LyricsAlignmentPolicy"/> 算出的
+    /// 位移。若这里也设成 Center/Right，一旦某条路径把 <c>Width</c> 撑开
+    /// （例如长句滚动给固定视口宽度），就会与位移叠加成双倍偏移——
     /// 那种 bug 只在特定文本长度下出现，极难复现。这里从源头杜绝。
+    /// </para>
+    /// <para>
+    /// 竖向用的是逐字字形树，对齐由列的位置决定（见
+    /// <c>LyricsPanel.Vertical.cs</c>），这三行文本在竖向根本不参与排版。
+    /// </para>
     /// </summary>
     private void ApplyAlignmentToTextBlocks()
     {
-        var textAlignment = _isVertical
-            ? Alignment switch
-            {
-                LyricsTextAlignment.Center => TextAlignment.Center,
-                LyricsTextAlignment.Right => TextAlignment.Right,
-                _ => TextAlignment.Left,
-            }
-            : TextAlignment.Left;
-
-        PrimaryText.TextAlignment = textAlignment;
-        PrimaryScanText.TextAlignment = textAlignment;
-        SecondaryText.TextAlignment = textAlignment;
+        PrimaryText.TextAlignment = TextAlignment.Left;
+        PrimaryScanText.TextAlignment = TextAlignment.Left;
+        SecondaryText.TextAlignment = TextAlignment.Left;
     }
 
     /// <summary>
@@ -1213,37 +1128,28 @@ public partial class LyricsPanel : UserControl
         (byte)Math.Clamp(from + ((to - from) * 0.75), 0, 255);
 
     /// <summary>
-    /// 切换竖向任务栏排版：<b>反向旋转抵消宿主旋转 + 沿主轴换行</b>。
+    /// 切换竖向任务栏排版：<b>逐字沿主轴排，字形各自抵消宿主旋转</b>。
     ///
-    /// 竖向任务栏的宽度通常只有 40–60 DIP，横排一行放不下一个句子，
-    /// 所以文本要沿主轴方向换行。但换行本身不足以让字形正立——
-    /// 这一点是**第二轮探针实测出来的，推翻了第一轮的结论**。
+    /// <para>
+    /// 这里不再给面板挂 <c>LayoutTransform(-90)</c>。历史上那个做法
+    /// （「抵消旋转 + 沿主轴折行」）确实能让字形正立，代价是面板内部又回到
+    /// 横向排版：短边 40 DIP 抵消后只剩 37.5 DIP 一行，<b>只放两个汉字</b>，
+    /// 一句 28 字的歌词要折 14 行——就是「竖向歌词只显示 6 个字」那个缺陷。
+    /// 逐字排把一列装到 44 字，这才是竖排的意义。
+    /// </para>
     ///
-    /// <c>TaskbarWindow.PositionWidget</c> 对竖向任务栏会**无条件**给整个
-    /// <c>TaskbarWidgetControl</c> 挂 <c>LayoutTransform = RotateTransform(90)</c>。
-    /// 第一轮探针只测了「Widget 不旋转 + 歌词换行」（G/H 方案，墨迹 541px），
-    /// 据此得出「竖向不需要任何旋转」——但那个前提在真机上不存在。
-    /// 补测真实场景后：
+    /// <para>
+    /// 旋转下放到每个字形（<c>RenderTransform(-90)</c>），且只有方块字需要；
+    /// 拉丁词整词侧躺沿列向下读。机制、容量账与两列的几何约束都写在
+    /// <c>LyricsPanel.Vertical.cs</c> 的文件注释里。
+    /// </para>
     ///
-    /// <list type="table">
-    /// <listheader><term>方案</term><description>实测结果</description></listheader>
-    /// <item><term>I：Widget(+90) + panel 不旋转</term>
-    /// <description>墨迹仅 182px（完整显示的 34%），文字整体躺倒。
-    /// 单字符 <c>—</c> 的包围盒 1×20（宽高比 0.05）证实是竖线。</description></item>
-    /// <item><term>J：Widget(+90) + panel LayoutTransform(−90)</term>
-    /// <description>墨迹 553px（与完整显示的 541px 相当），文字正立。
-    /// 单字符包围盒 20×1（宽高比 20.0）证实是横线。</description></item>
-    /// </list>
-    ///
-    /// 所以正确做法是「<b>抵消</b>宿主旋转 + 换行」，而不是「不旋转」。
-    /// 与第一轮 C 方案（panel 挂 −90 但尺寸硬编码 185）的区别在尺寸：
-    /// C 之所以墨迹 0px，是因为 panel 硬编码宽度 185 超出父级可用空间后
-    /// 被排到 x = −135 画布外。这里 panel 宽度由 Grid 布局给出（不硬编码），
-    /// 旋转后父级拿到的是真实尺寸，不会溢出。
-    ///
-    /// 顺带一个好处：抵消之后坐标系回到「屏幕坐标」，扫描渐变
-    /// （沿 PrimaryContainer 宽度方向）与长句滚动都天然正确，
-    /// 不需要为竖向单独调方向。
+    /// <para>
+    /// 两套内容互斥：横向用 <c>RootGrid</c> 的两行，竖向用
+    /// <c>VerticalContainer</c> 的逐字画布。横向那两行的 <c>TextBlock</c>
+    /// 在竖向仍然保留——它们是「文本 / 配色 / 不透明度」的唯一真相，
+    /// 字形树照着它建，不另存一份状态。
+    /// </para>
     /// </summary>
     public void SetVerticalMode(bool isVertical)
     {
@@ -1259,7 +1165,7 @@ public partial class LyricsPanel : UserControl
 
         if (_isVertical == isVertical)
         {
-            // 方向没变，别重复设变换与 TextWrapping——两者都会触发 measure 遍，
+            // 方向没变，别重复设变换与可见性——两者都会触发 measure 遍，
             // 而这个方法被 UpdatePosition 每 1.5s 调一次。
             UpdateEffectiveVisibility();
             return;
@@ -1267,51 +1173,38 @@ public partial class LyricsPanel : UserControl
 
         _isVertical = isVertical;
 
-        // 抵消宿主的 RotateTransform(90)。
-        //
-        // 用 LayoutTransform 而不是 RenderTransform：后者只改绘制、不改布局，
-        // 父级仍按未旋转的尺寸排版，结果就是第一轮 D 方案那样被裁（墨迹 64px）。
-        //
-        // 横向时用 Transform.Identity 而不是 null，避免 RenderTransform 在
-        // null 与非 null 之间切换也触发一次合成失效。
-        LayoutTransform = isVertical ? new RotateTransform(-90) : Transform.Identity;
+        // 一律 Identity：面板与宿主那个 +90 同处一个坐标系，不再整体抵消
+        // （抵消会把排版退回「一行两个字」，见方法注释）。
+        LayoutTransform = Transform.Identity;
 
-        // 换行策略：竖向时打开。抵消旋转后，这里的「宽度」对应屏幕上的
-        // **纵向**延伸，所以 Wrap 折的是「任务栏宽度」这条边。
-        var wrapping = isVertical ? TextWrapping.Wrap : TextWrapping.NoWrap;
+        // 两套内容互斥切换。用 Collapsed 而不是 Hidden：Collapsed 的子树
+        // 不测量、不绘制、不参与命中测试，逐字路径上那两行的 TextBlock
+        // 于是零成本。
+        RootGrid.Visibility = isVertical ? Visibility.Collapsed : Visibility.Visible;
+        VerticalContainer.Visibility = isVertical ? Visibility.Visible : Visibility.Collapsed;
 
-        PrimaryText.TextWrapping = wrapping;
-        PrimaryScanText.TextWrapping = wrapping;
-        SecondaryText.TextWrapping = wrapping;
+        // 换行只在横向有意义：横向的 TextBlock 宽度是 Auto，靠位移对齐。
+        PrimaryText.TextWrapping = TextWrapping.NoWrap;
+        PrimaryScanText.TextWrapping = TextWrapping.NoWrap;
+        SecondaryText.TextWrapping = TextWrapping.NoWrap;
 
-        // 对齐的实现方式与方向绑定（横向靠位移、竖向靠 TextAlignment），
-        // 所以方向一变必须重新写一遍。写在 TextWrapping 之后：
-        // 竖向的 Width 由下面的 UpdateVerticalWrapLayout 写入，
-        // 而 TextAlignment 要等宽度就位才有意义——但设置本身无副作用，
-        // 提前写不会错，放在这里只是让「与换行一起变」这件事更明显。
+        // 对齐的实现方式与方向绑定（横向靠位移），方向一变必须重新写一遍。
         ApplyAlignmentToTextBlocks();
 
-        // 竖向时两行的高度不再固定——换行后行数由内容决定，
-        // 交给容器 Auto 高度，由主轴方向的可用长度约束。
         if (isVertical)
         {
-            UpdateVerticalWrapLayout();
+            // 短边此刻通常还没写入（宿主要到 CalculateSize 才写），
+            // 这里会早退；宿主写完 Height 会触发 SizeChanged 再进来一次。
+            EnsureVerticalLayout();
         }
         else
         {
-            // 横向时 TextBlock 宽度必须回到 Auto：
-            // 否则会保留竖向时写进去的固定宽度，长句滚动算错。
-            PrimaryText.Width = double.NaN;
-            PrimaryScanText.Width = double.NaN;
-            SecondaryText.Width = double.NaN;
-
-            // 面板自身的尺寸也要清掉：竖向时宿主的 CalculateSize 会把宽度写成
-            // 「可用短边」、高度写成「折行后的主轴长度」。横向两者都必须回到
-            // Auto 交给宿主重写，否则会在一帧里按 40 宽折行、或按竖向的高度
-            // 留一条空白。
+            // 竖向的显式尺寸与字形树都要清掉，否则切回横向后：
+            //   - 面板宽度停在「主轴长度」上，长句滚动按错宽度算；
+            //   - 面板高度停在「可用短边」上，留一条空白。
             Width = double.NaN;
             Height = double.NaN;
-            _lastWrapViewport = -1;
+            ResetVerticalTree();
 
             if (_hasMetrics)
             {
@@ -1325,41 +1218,15 @@ public partial class LyricsPanel : UserControl
     }
 
     /// <summary>
-    /// 竖向模式下把两行文本钉到折行宽度，并**显式写回 Canvas 的高度**。
-    ///
-    /// <b>这一步不能省，而且有两个坑。</b>
-    ///
-    /// <para>
-    /// 坑一：<c>TextWrapping.Wrap</c> 只有在元素拿到「有限宽度约束」时才生效，
-    /// 而 <c>Canvas</c> 给子元素的是**无限宽度**（Canvas 的设计就是不约束子元素）。
-    /// 所以光设 <c>TextWrapping</c> 不够，必须显式写 <c>Width</c>。
-    /// </para>
-    ///
-    /// <para>
-    /// 坑二（截图矩阵实测踩到）：<c>Canvas.MeasureOverride</c> 对任何内容都返回
-    /// <c>(0,0)</c>，所以 <c>Height="Auto"</c> 的 Canvas 会塌成 0 高，
-    /// 叠在 <c>ClipToBounds="True"</c> 上就是「文字全部消失」。横向没事是因为
-    /// XAML 把高度写死成 19；竖向一旦放开高度约束（换行后行数不定），
-    /// 就必须自己量出折行后的高度再写回去。
-    /// </para>
-    ///
-    /// <para>
-    /// 折行宽度取**面板自身**的宽度，不能取 <c>PrimaryContainer.ActualWidth</c>：
-    /// 后者的高度正是由本方法写进去的，读它会形成「先有鸡还是先有蛋」，
-    /// 首次布局时读到 0 就再也不更新了（生产代码里面板宽度由
-    /// <c>TaskbarWidgetControl.CalculateSize</c> 写入，是唯一可靠来源）。
-    /// </para>
-    /// </summary>
-    /// <summary>
     /// 次要行的显示条件变了（翻译开关、单双行切换）之后，让布局跟上。
     ///
     /// 只做两件事：
     /// <list type="number">
     /// <item>按当前帧重新算一次次要行该显示什么——开关变了但帧没变，
     /// 不重算就还挂着上一次的内容。</item>
-    /// <item>竖向时重量折行高度（次要行整块出现/消失会改变总高）。</item>
+    /// <item>竖向重建一次字形树（关掉翻译要少排一列）。</item>
     /// </list>
-    /// 横向不需要重量：行高固定，只是文本变空。
+    /// 横向不需要动布局：行高固定，只是文本变空。
     /// </summary>
     public void RefreshSecondaryLineLayout()
     {
@@ -1370,207 +1237,21 @@ public partial class LyricsPanel : UserControl
 
         if (_isVertical)
         {
-            UpdateVerticalWrapLayout();
-        }
-    }
-
-    private void UpdateVerticalWrapLayout()
-    {
-        if (!_isVertical || !_hasMetrics)
-        {
-            return;
-        }
-
-        var viewport = ResolveVerticalViewport();
-        if (viewport <= 0)
-        {
-            // 还没布局完成（面板宽度尚未由宿主写入）。SizeChanged 会再来一次。
-            //
-            // 这条早退是「竖向一个字都不显示」的唯一入口，所以留一条日志：
-            // 真机上如果又出现竖向空白，日志里应当只有一次，且紧跟着
-            // 宿主写入宽度后的第二次调用。若持续打印，说明宿主没写宽度。
-            if (!_verticalViewportWarned)
-            {
-                _verticalViewportWarned = true;
-                Logger.Debug(
-                    "Vertical lyrics: wrap viewport is {0} (panel ActualWidth={1}, Width={2}); delaying layout until the host writes a finite width.",
-                    viewport, ActualWidth, Width);
-            }
-
-            return;
-        }
-
-        _verticalViewportWarned = false;
-
-        _lastWrapViewport = viewport;
-
-        PrimaryText.Width = viewport;
-        PrimaryScanText.Width = viewport;
-        SecondaryText.Width = viewport;
-
-        // 高度按折行结果实测：一行还是五行由内容决定，度量预知不了。
-        PrimaryContainer.Height = MeasureWrappedHeight(
-            PrimaryText.Text, _metrics.FontSize, viewport);
-
-        SecondaryContainer.Height = MeasureWrappedHeight(
-            SecondaryText.Text, _metrics.TranslationFontSize, viewport);
-
-        // 次要行在竖向也是 Auto：高度由上面写进 Canvas 的值决定，
-        // 不能沿用横向的固定 LineHeight（那会把折行后的翻译行裁成一行）。
-        SecondaryRow.Height = GridLength.Auto;
-    }
-
-    /// <summary>
-    /// 竖向折行宽度：面板自身的宽度。
-    ///
-    /// <c>ActualWidth</c> 在首次布局前是 0，此时退回显式 <c>Width</c>
-    /// （宿主在 <c>CalculateSize</c> 里刚写进去、还没走完布局）。
-    /// </summary>
-    private double ResolveVerticalViewport()
-    {
-        var width = ActualWidth;
-        if (!double.IsFinite(width) || width <= 0)
-        {
-            width = Width;
-        }
-
-        return double.IsFinite(width) && width > 0 ? width : 0;
-    }
-
-    /// <summary>
-    /// 量出文本在给定宽度下折行后的高度（DIP）。
-    ///
-    /// 用**离树量尺**（<see cref="_wrapProbe"/>）而不是
-    /// <c>PrimaryText.ActualHeight</c>：后者要等一轮布局才有值，而我们需要在
-    /// **决定 Canvas 高度**的那一刻就知道它——否则第一次布局永远是 0 高，
-    /// 永远看不到文字。
-    ///
-    /// 也不用 <see cref="FormattedText"/>：两者对「比折行宽度还宽的单个词」
-    /// 处理不同，它不切词、<see cref="TextBlock"/> 切词，量出来会少行
-    /// （详见 <see cref="_wrapProbe"/> 的说明）。量尺与真正显示文本的控件
-    /// 同类同属性，断行点才真正一致。
-    /// </summary>
-    /// <param name="maxWidth">
-    /// 折行宽度。传 <see cref="double.PositiveInfinity"/> 表示**不折行**，
-    /// 只量单行高度（<see cref="MeasureLineHeight"/> 就是这么用的）。
-    /// </param>
-    private double MeasureWrappedHeight(string? text, double fontSize, double maxWidth)
-    {
-        if (string.IsNullOrEmpty(text) || fontSize <= 0 || maxWidth <= 0)
-        {
-            return 0;
-        }
-
-        try
-        {
-            var probe = _wrapProbe;
-            probe.FontFamily = PrimaryText.FontFamily;
-            probe.FontStyle = PrimaryText.FontStyle;
-            probe.FontWeight = PrimaryText.FontWeight;
-            probe.FontStretch = PrimaryText.FontStretch;
-            probe.FontSize = fontSize;
-            probe.Text = text;
-
-            // 文本管线也要与真正显示的那个控件一致：Display/Ideal 的字形步进
-            // 不同，混用会让折行点差一两个字，量的高度就白量了。
-            probe.FlowDirection = FlowDirection;
-            TextOptions.SetTextFormattingMode(probe, TextOptions.GetTextFormattingMode(PrimaryText));
-            TextOptions.SetTextRenderingMode(probe, TextOptions.GetTextRenderingMode(PrimaryText));
-
-            double available;
-            if (double.IsFinite(maxWidth))
-            {
-                // Width 与可用宽度都给同一个值：TextBlock 的断行只看 Width，
-                // 但外层给的可用宽度若更窄，它仍会按更窄的那个折。
-                probe.Width = maxWidth;
-                available = maxWidth;
-            }
-            else
-            {
-                probe.Width = double.NaN;
-                available = double.PositiveInfinity;
-            }
-
-            probe.Measure(new Size(available, double.PositiveInfinity));
-            return probe.DesiredSize.Height;
-        }
-        catch (Exception)
-        {
-            // 量不出来就退回单行高度：宁可少显示几行，也不要 0 高把文字全裁掉。
-            return _metrics.LineHeight;
+            EnsureVerticalLayout();
         }
     }
 
     /// <summary>
-    /// 竖向模式下，当前内容**实测**需要的主轴长度（DIP）。
-    ///
-    /// <b>为什么需要它。</b> 宿主用 <see cref="LyricsVerticalLayout"/> 估算
-    /// 主轴长度，再写进 <c>Widget.Height</c>。但估算是按宽度除法推的近似值，
-    /// 而实际折行由 <c>TextBlock</c> 的断行算法决定：中文标点禁则
-    ///（标点不能出现在行首）会让实际行数比估算多一行。估算偏小的后果是
-    /// 外层容器高度不够、最后一行被 <c>ClipToBounds</c> 整行裁掉，
-    /// 而截图上看起来只是「字少了点」，很难发现。
-    ///
-    /// 宿主取 <c>max(估算, 本属性)</c> 即可兜住偏小的一侧，
-    /// 并按它给面板写固定高度（竖向时面板自身的高度就是主轴长度）。
-    ///
-    /// 返回值是 0 表示「不在竖向」「还没度量」或「折行宽度还没由宿主写入」——
-    /// 都不是错误，调用方应退回自己的兜底值。
-    /// **它不需要先跑一轮布局**：折行高度是 <c>FormattedText</c> 现算的，
-    /// 只有折行宽度（<c>Panel.Width</c>，由宿主写）是前提。
-    /// </summary>
-    public double VerticalContentHeight
-    {
-        get
-        {
-            if (!_isVertical || !_hasMetrics)
-            {
-                return 0;
-            }
-
-            // 先把两行的高度按实测折行结果写对——这一步是同步的
-            //（FormattedText 直接量高度，不依赖布局遍）。
-            UpdateVerticalWrapLayout();
-
-            // 取两行刚写回去的高度之和，**刻意不读 RootGrid.ActualHeight**。
-            //
-            // 两个原因，都是真机上量到过的：
-            //   1. ActualHeight 要等一整轮布局才会更新，而宿主在
-            //      <c>CalculateSize</c> 里就要用这个值决定「小组件沿主轴占多长」。
-            //      读到上一轮的旧值，小组件就永远比内容短一行，最后一行被裁。
-            //   2. 一旦宿主按这个值给面板写了固定高度（见
-            //      <c>TaskbarWidgetControl.ApplyVerticalLyricsPanelMainAxis</c>），
-            //      RootGrid 的 ActualHeight 就变成「宿主要多高」而不是
-            //      「内容要多高」——读它等于自证，内容被裁之后再也不会长回来。
-            var primary = PrimaryContainer.Height;
-            var secondary = SecondaryContainer.Height;
-
-            var total = (double.IsFinite(primary) ? Math.Max(primary, 0) : 0)
-                        + (double.IsFinite(secondary) ? Math.Max(secondary, 0) : 0);
-
-            return total;
-        }
-    }
+    /// 竖向任务栏上是否显示歌词。
     ///
     /// 默认 true。初版设计是「默认关闭，等 #12 验收后打开」，但探针证明
-    /// 竖向路径只是「不旋转 + 换行 + 换主轴」，成本与风险都远低于原方案。
-    /// 保留开关的唯一价值是「真机上万一有问题可以一键退回不显示歌词」。
+    /// 竖向路径的成本与风险都远低于原方案。保留开关的唯一价值是
+    /// 「真机上万一有问题可以一键退回不显示歌词」。
     /// </summary>
     public static bool SupportsVerticalTaskbar { get; set; } = true;
 
     private bool _isVertical;
     private bool _isVerticalPending;
-
-    /// <summary>
-    /// 上次竖向折行用的视口宽度（DIP）。仅用于诊断与「宽度没变就不重量」的短路，
-    /// 不参与正确性判断——正确性只依赖 <see cref="UpdateVerticalWrapLayout"/> 被调用。
-    /// </summary>
-    private double _lastWrapViewport = -1;
-
-    /// <summary>
-    /// 已经为「竖向视口为 0」打过日志。只打一次，避免每轮布局刷屏。
-    /// </summary>
-    private bool _verticalViewportWarned;
 
     private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
 
@@ -1589,6 +1270,10 @@ public partial class LyricsPanel : UserControl
         _isScanning = false;
         _lastScanProgress = -1;
         _lastReportedWidth = -1;
+
+        // 竖排的字形树立刻清空：清空是「停止播放 / 切歌」，不是换行，
+        // 让它等到下一次读 VerticalContentLength 才回收没有意义。
+        ResetVerticalTree();
     }
 
     /// <summary>

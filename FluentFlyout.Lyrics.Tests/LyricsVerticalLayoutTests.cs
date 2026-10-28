@@ -336,19 +336,22 @@ public sealed class LyricsVerticalLayoutTests
         // 短句上凭空多算一行（实测 single 状态从 33.0 涨到 49.5），
         // 而长句上又可能仍不够。
         //
-        // 正确的分工：估算给「下限」，实际偏差由 LyricsPanel.VerticalContentHeight
-        // 在布局后用实测值兜住（宿主取两者的较大者）。
+        // 正确的分工曾经是：估算给「下限」，实际偏差由面板在布局后用实测值
+        // 兜住、宿主取较大者。逐字竖排之后这条分工不再走——竖向长度改由
+        // LyricsPanel.VerticalContentLength 直接上报，估算器已退出生产路径。
         //
-        // 这条断言锁住「估算必须保持纯算术」——若将来有人往 CountRows 里
-        // 加系数，它会立刻失败，提醒去看 VerticalContentHeight 那条路径。
+        // 保留这个测试是因为估算器本身还留着：ResolveMaxMainAxisLength 仍在
+        // 上限侧工作，将来接逐字滚动时也需要一个「至少多长」的下界。而它
+        // 的首要品质恰恰是「纯」——一旦有人往 CountRows 里塞禁则系数，
+        // 短句会凭空多算一行，将来当下界用就会白占任务栏空间。
         var content = new LyricsVerticalContent(
             PrimaryWidth: 377,      // 长句实测宽度
             PrimaryLineHeight: 16.51);
 
         var length = LyricsVerticalLayout.EstimateMainAxisLength(content, 60, 800);
 
-        // 377 / 56 = 6.73 → 7 行（纯算术）。实际 TextBlock 折了 8 行，
-        // 差的那一行由 VerticalContentHeight 补。
+        // 377 / 56 = 6.73 → 7 行（纯算术）。真实折行是 8 行（禁则多一行），
+        // 那个差曾经由面板实测兜住；现在整条路径都不用了。
         Assert.Equal(7 * 16.51, length, precision: 6);
     }
 
