@@ -3,6 +3,7 @@
 
 using FluentFlyout.Classes.Settings;
 using FluentFlyout.Controls;
+using FluentFlyout.Lyrics.Diagnostics;
 using FluentFlyout.Lyrics.Layout;
 using FluentFlyoutWPF;
 using FluentFlyoutWPF.Classes;
@@ -117,6 +118,40 @@ public partial class TaskbarWindow : Window
 
     private IntPtr _lastTaskbarHandle;
     private bool _positionUpdateInProgress;
+
+    /// <summary>
+    /// 有一次重排请求在「正在排」的时候到达，等这一轮结束补跑一次。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 早先这里是<b>直接丢弃</b>（<c>if (_positionUpdateInProgress) return;</c>）。
+    /// 丢弃在轮询时代没问题——反正 1.5s 后还会再来一次。但歌词路径是事件驱动的：
+    /// 换歌/换字号那一次请求恰好落在一次 UIA 慢查询里，就会被丢掉，用户看到的是
+    /// 「新宽度要等 1.5s 才生效」，而日志里一次错误都没有。
+    /// </para>
+    /// <para>
+    /// 只补一次（标记随即清掉），所以最坏情况是「每完成一轮多跑一轮」，
+    /// 不会因为上游每帧都请求而在这里堆成队列。
+    /// </para>
+    /// </remarks>
+    private RepositionReason? _pendingRepositionReason;
+
+    /// <summary>
+    /// 整窗重排的预算计数器（R1 护栏）。
+    /// </summary>
+    /// <remarks>
+    /// 只用于诊断：超支时打一条 Warn，带上分来源次数。它<b>不拦</b>任何一次重排——
+    /// 拦下来会让小组件停在错误的尺寸上，比慢一点更糟。要减少次数得从调用方下手
+    /// （见 <c>LyricsPanel.ReportDesiredWidth</c> 的竖向分支）。
+    /// </remarks>
+    private readonly RepositionBudget _repositionBudget = new();
+
+    /// <summary>
+    /// 预算计数器的时间基准。<see cref="RepositionBudget"/> 只收单调时间戳，
+    /// 自己不看表，这样它的窗口逻辑能被单测跑到。
+    /// </summary>
+    private readonly long _repositionClockStart = Stopwatch.GetTimestamp();
+
     private bool _isClosing;
     private readonly Dictionary<string, Task> _pendingAutomationTasks = [];
 
@@ -134,7 +169,7 @@ public partial class TaskbarWindow : Window
 
         _timer = new DispatcherTimer();
         _timer.Interval = TimeSpan.FromMilliseconds(1500); // slow auto-update for display changes
-        _timer.Tick += (s, e) => UpdatePosition();
+        _timer.Tick += (s, e) => UpdatePosition(RepositionReason.Timer);
         _timer.Start();
 
         Show();
@@ -159,7 +194,7 @@ public partial class TaskbarWindow : Window
                 InvalidateArrange();
                 InvalidateVisual();
                 UpdateLayout();
-                UpdatePosition();
+                UpdatePosition(RepositionReason.Dpi);
             }, DispatcherPriority.Loaded);
         }
 
@@ -215,7 +250,7 @@ public partial class TaskbarWindow : Window
         // 必须无条件重排一次。不能靠 1.5s 的定时器兜底：那期间用户
         // 已经把「居中」点下去了，看到的却还是左对齐，会以为设置没生效。
         Widget.WidgetWidthStrategyChanged += (_, _) =>
-            Dispatcher.BeginInvoke(() => UpdatePosition(), DispatcherPriority.Background);
+            Dispatcher.BeginInvoke(() => UpdatePosition(RepositionReason.WidthStrategy), DispatcherPriority.Background);
     }
 
     /// <summary>
@@ -474,7 +509,8 @@ public partial class TaskbarWindow : Window
 
             SetParent(taskbarWindowHandle, taskbarHandle); // if this window is created faster than the Taskbar is loaded, then taskbarHandle will be NULL.
 
-            CalculateAndSetPosition(taskbarHandle, taskbarWindowHandle, isMainTaskbarSelected);
+            CalculateAndSetPosition(
+                taskbarHandle, taskbarWindowHandle, isMainTaskbarSelected, RepositionReason.Startup);
         }
         catch (Exception ex)
         {
@@ -536,8 +572,39 @@ on_error:
             Logger.Error("Taskbar Widget error during window region reset.");
     }
 
-    private void UpdatePosition()
+    /// <summary>
+    /// 这一轮重排是被谁叫起来的。只用于诊断统计（见 <see cref="RepositionBudget"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 分来源而不是只数总数，是因为「超了」这个事实本身不足以定位问题：
+    /// 定时器心跳是既有的固定开销（1.5s → 40 次/分），真正会失控的是事件驱动的
+    /// 那几路。日志里带上来源次数，才看得出该去改谁。
+    /// </remarks>
+    private enum RepositionReason
     {
+        /// <summary>1.5s 定时器心跳。属于基线，不计入预算。</summary>
+        Timer,
+
+        /// <summary>歌词/对齐等宽度策略变化（<c>WidgetWidthStrategyChanged</c>）。</summary>
+        WidthStrategy,
+
+        /// <summary>DPI 变化（<c>WM_DPICHANGED</c>）。</summary>
+        Dpi,
+
+        /// <summary>用户换了目标显示器。</summary>
+        Target,
+
+        /// <summary>媒体信息更新（<c>UpdateUi</c> 结尾）。</summary>
+        MediaUi,
+
+        /// <summary>窗口初次装配（<c>SetupWindow</c>）。</summary>
+        Startup,
+    }
+
+    private void UpdatePosition(RepositionReason reason = RepositionReason.Timer)
+    {
+        RecordReposition(reason);
+
         if (_isClosing || MainWindow.ExplorerRestarting)
         {
             // Explorer is restarting -- do NOTHING
@@ -590,7 +657,7 @@ on_error:
             {
                 Dispatcher.BeginInvoke(() =>
                 {
-                    CalculateAndSetPosition(taskbarHandle, interop.Handle, isMainTaskbarSelected);
+                    CalculateAndSetPosition(taskbarHandle, interop.Handle, isMainTaskbarSelected, reason);
                 }, DispatcherPriority.Background);
             }
         }
@@ -598,6 +665,41 @@ on_error:
         {
             Logger.Error(ex, "Taskbar Widget error during position update");
         }
+    }
+
+    /// <summary>
+    /// 记一次重排；超预算时打一条带分来源次数的 Warn。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 只报不拦（见 <see cref="_repositionBudget"/> 的说明）。每分钟一条的上限
+    /// 由 <see cref="RepositionBudget.TryBeginViolationReport"/> 保证——超支之后
+    /// 每一帧都可能继续超支，不节流会把日志刷满，真正的第一条反而找不到。
+    /// </para>
+    /// <para>
+    /// 计数点在<b>入口</b>而不是 <c>SetWindowPos</c> 处：早退的那些调用
+    /// （窗口关闭中、Explorer 重启中、设置里没开）同样代表「有人在不停请求」，
+    /// 而那正是要抓的东西。代价是这条计数比真实落地次数略高，可接受——
+    /// 它的用途是发现回归，不是计费。
+    /// </para>
+    /// </remarks>
+    private void RecordReposition(RepositionReason reason)
+    {
+        var now = Stopwatch.GetElapsedTime(_repositionClockStart);
+        var overBudget = _repositionBudget.Hit(
+            now,
+            reason.ToString(),
+            baseline: reason == RepositionReason.Timer);
+
+        if (!overBudget || !_repositionBudget.TryBeginViolationReport(now))
+        {
+            return;
+        }
+
+        Logger.Warn(
+            $"Taskbar widget repositioned {_repositionBudget.Summarize()}. " +
+            "Frequent repositioning includes UIA queries and SetWindowPos, which can stall the taskbar " +
+            "on machines running UI mods (Nilesoft Shell / Windhawk). Check the lyric frame path first.");
     }
 
     private void ResetTaskbarCachesIfHandleChanged(IntPtr taskbarHandle)
@@ -641,15 +743,24 @@ on_error:
             return;
         }
 
-        UpdatePosition();
+        UpdatePosition(RepositionReason.Target);
     }
 
-    private void CalculateAndSetPosition(IntPtr taskbarHandle, IntPtr taskbarWindowHandle, bool isMainTaskbarSelected)
+    private void CalculateAndSetPosition(
+        IntPtr taskbarHandle,
+        IntPtr taskbarWindowHandle,
+        bool isMainTaskbarSelected,
+        RepositionReason reason)
     {
         // Prevent overlapping updates - if a previous update is still running
-        // (e.g. waiting for an automation query timeout), skip this tick.
+        // (e.g. waiting for an automation query timeout), remember the request
+        // and replay it once after this pass instead of dropping it.
         if (_positionUpdateInProgress)
+        {
+            _pendingRepositionReason = reason;
             return;
+        }
+
         _positionUpdateInProgress = true;
 
         try
@@ -732,7 +843,36 @@ on_error:
         finally
         {
             _positionUpdateInProgress = false;
+
+            // 这一轮期间到达的请求在这里补跑一次。放在 finally 里而不是 try 尾部：
+            // 中途 return（DPI 无效、句柄失效）时同样有「新状态没落地」的问题。
+            if (_pendingRepositionReason is { } pending)
+            {
+                _pendingRepositionReason = null;
+
+                Dispatcher.BeginInvoke(
+                    () => ReplayPendingReposition(pending),
+                    DispatcherPriority.Background);
+            }
         }
+    }
+
+    /// <summary>
+    /// 补跑上一轮期间被挡下的那次重排。
+    /// </summary>
+    /// <remarks>
+    /// 走 <see cref="UpdatePosition"/> 的常规入口而不是直接调
+    /// <see cref="CalculateAndSetPosition"/>：中间可能隔着一次换屏，句柄与目标
+    /// 都得重新解析。补跑本身也会被计入预算计数——它确实又排了一次。
+    /// </remarks>
+    private void ReplayPendingReposition(RepositionReason reason)
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        UpdatePosition(reason);
     }
 
     /// <summary>
@@ -1393,7 +1533,7 @@ on_error:
         Widget.UpdateUi(title, artist, icon, playbackStatus, playbackControls);
 
         // Update position after UI change
-        Dispatcher.BeginInvoke(() => UpdatePosition(), DispatcherPriority.Background);
+        Dispatcher.BeginInvoke(() => UpdatePosition(RepositionReason.MediaUi), DispatcherPriority.Background);
 
         Dispatcher.Invoke(() =>
         {

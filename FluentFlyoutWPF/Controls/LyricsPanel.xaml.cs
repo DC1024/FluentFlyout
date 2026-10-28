@@ -833,11 +833,28 @@ public partial class LyricsPanel : UserControl
     /// 宽度只在离散信号变化后才可能变（换歌、换翻译、字号/对齐变化），
     /// 所以这里用阈值过滤，避免长句滚动/逐字扫描期间反复请求重排。
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>竖向报的不是宽度，是主轴长度。</b>竖排的短边被任务栏钉死、没有协商余地，
+    /// 能协商的只有沿主轴的长度（<see cref="VerticalContentLength"/>）。
+    /// 早先竖向也走横向那套判据，而竖向的 <c>_documentMaxWidth</c> 恒为 0
+    /// （见 <c>RecalculateDocumentWidth</c>），于是每一帧都退回去量当前行——
+    /// 结果是<b>每一句换行都请求一次整窗重排</b>：60s 播放 20 次，而每次重排都带
+    /// 跨进程 UIA 查询与 <c>SetWindowPos</c>（见落点文档 3.1 与 R1）。
+    /// </para>
+    /// <para>
+    /// 换用主轴长度后，有文档的竖向在整首歌内长度恒定 → 一次都不请求；
+    /// 没文档时长度确实跟着当前行走，换行重排仍然是必要的，行为不变。
+    /// </para>
+    /// </remarks>
     private void ReportDesiredWidth()
     {
         // 有整首文档时用「全曲最宽句」——宽度在歌内恒定，换行不再触发重排。
         // 没有文档（首帧之前、纯音乐、没搜到词）才退回按当前行量。
-        var desired = _documentMaxWidth > 0 ? _documentMaxWidth : MeasureDesiredWidth();
+        var desired = _isVertical
+            ? VerticalContentLength
+            : _documentMaxWidth > 0 ? _documentMaxWidth : MeasureDesiredWidth();
+
         if (desired <= 0)
         {
             return;
