@@ -116,6 +116,15 @@ public partial class TaskbarWidgetControl : UserControl
 
         // Initialize control order
         ReorderControls();
+
+        // 面板内容宽度变了（换歌定下整首宽度、字号变化）要立刻重排一次。
+        //
+        // 不能靠 TaskbarWindow 的 1.5s 定时器兜底：那期间胶囊还停在旧宽度上，
+        // 长句会先按旧视口开始滚动，等定时器到点才变宽、句子不再溢出，
+        // 那次滚动白跑一趟——真机验收报的正是这个。
+        // 阈值过滤在面板里做，这里不再判：能到这里说明宽度确实变了。
+        LyricsPanel.DesiredWidthChanged += (_, _) =>
+            WidgetWidthStrategyChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void ReorderControls()
@@ -573,6 +582,22 @@ public partial class TaskbarWidgetControl : UserControl
             isSmallTaskbar: _isSmallTaskbar,
             preferredFontSize: settings.LyricsFontSize,
             userSingleLine: settings.LyricsSingleLine);
+    }
+
+    /// <summary>
+    /// 换歌时把整首歌词交给面板，用来定下这首歌的固定宽度。
+    /// </summary>
+    /// <remarks>
+    /// 宽度按「整首最宽的一句」定，而不是按当前行：胶囊才不会随每句胀缩，
+    /// 长句也不会出现「先滚动、一秒后变宽」的抖动。详见
+    /// <see cref="LyricsDocumentWidth"/>。
+    ///
+    /// 调用顺序要求：**先给文档、再给这一帧**（装配层在同一次
+    /// <c>FrameReady</c> 里按这个顺序调用），否则第一句会先按旧宽度排一次版。
+    /// </remarks>
+    public void ApplyLyricDocument(IReadOnlyList<LyricLine>? lines)
+    {
+        LyricsPanel.ApplyDocument(lines);
     }
 
     /// <summary>

@@ -74,6 +74,22 @@ public sealed class LyricSyncService : IDisposable
     /// </summary>
     public TimeSpan? CurrentTrackEndEstimate => _currentTrackEndEstimate;
 
+    /// <summary>
+    /// 当前曲目已解析出的整份歌词。没有曲目、还没解析出来、或纯音乐时为 <c>null</c>。
+    ///
+    /// <para>
+    /// 给渲染层算「整首歌的固定宽度」用：按当前行量宽度会让小组件随每句胀缩，
+    /// 长句还会先开始滚动、等一秒后宽度变大时才停下，那次滚动白跑一趟。
+    /// 整份文档在解析完成的那一刻就定了，歌内不再变，正好用来定宽度。
+    /// </para>
+    ///
+    /// <para>
+    /// 返回的是不可变快照（<see cref="LyricDocument.Lines"/> 构造后只读），
+    /// 调用方随便遍历，不需要加锁。换歌会换成新实例，引用比较即可判断变没变。
+    /// </para>
+    /// </summary>
+    public LyricDocument? CurrentDocument => _currentDocument;
+
     public LyricSyncService(
         ILyricResolutionCoordinator coordinator,
         Func<string?, TimeSpan>? getPlayerLeadTime = null,

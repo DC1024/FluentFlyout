@@ -61,6 +61,23 @@ internal sealed class LyricsService : IDisposable
     private string? _lastFrameTitle;
 
     /// <summary>
+    /// 上一次通知出去的歌词文档。按**引用**比较：Core 换歌时会换成新实例，
+    /// 同一首歌的重复检索也会换实例（歌词源修正），两者都该重新定宽度。
+    /// </summary>
+    private LyricDocument? _lastDocument;
+
+    /// <summary>
+    /// 当前曲目的整份歌词换了（含变成 null：纯音乐、搜不到、停止播放）。
+    ///
+    /// <para>
+    /// 渲染层需要整首歌词才能定下「这首歌的固定宽度」——按当前行量宽度会让
+    /// 胶囊随每句胀缩，长句还会先滚动再变宽。事件排在
+    /// <see cref="FrameReady"/> 之前触发，保证第一帧就用新宽度排。
+    /// </para>
+    /// </summary>
+    public event EventHandler<LyricDocument?>? DocumentChanged;
+
+    /// <summary>
     /// 同一首歌连续产出「空行」帧的次数。
     ///
     /// 为什么要专门数：<b>「没开歌词」和「开了但搜不到词」在现象上完全一样</b>
@@ -247,6 +264,18 @@ internal sealed class LyricsService : IDisposable
         }
 
         TrackEmptyFrameDiagnostics(frame);
+
+        // 文档变了要先通知：渲染层拿它算「整首歌的固定宽度」，
+        // 排在 FrameReady 之前才能保证第一帧就按新宽度排版。
+        //
+        // 按引用比较而不是按内容：换歌、歌词源修正、清空都会换实例，
+        // 三种情况都该重新定宽度，而每帧深比较一份几百行的列表不值得。
+        var document = _syncService.CurrentDocument;
+        if (!ReferenceEquals(document, _lastDocument))
+        {
+            _lastDocument = document;
+            DocumentChanged?.Invoke(this, document);
+        }
 
         FrameReady?.Invoke(this, frame);
     }
