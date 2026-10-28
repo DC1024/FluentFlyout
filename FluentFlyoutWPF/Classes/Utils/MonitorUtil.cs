@@ -20,6 +20,19 @@ public static class MonitorUtil
         public uint dpiX;
         public uint dpiY;
         public string deviceId;
+
+        /// <summary>
+        /// 监视器设备接口路径（<c>\\?\DISPLAY#TCL2702#5&amp;2ec52e58&amp;0&amp;UID4355#{接口类GUID}</c>）。
+        /// 取不到时等于 <see cref="deviceId"/>，**不会为空**。
+        /// </summary>
+        /// <remarks>
+        /// 这是唯一适合存进设置的显示器标识：<see cref="deviceId"/> 只是 GDI 设备名
+        /// （<c>\\.\DISPLAY1</c>），换显卡接口、换线、装驱动都可能变；枚举顺序更是一次插拔就会变。
+        /// 值保持 API 原样（含结尾那段 <c>#{e6f07b5f-…}</c>），只做比较与展示，不做规范化——
+        /// 拆解会让「同一个 API 两次返回是否相同」这种判断多一层自造规则。
+        /// </remarks>
+        public string devicePath;
+
         public string deviceName;
     }
 
@@ -37,13 +50,17 @@ public static class MonitorUtil
 
         if (GetMonitorInfo(hMonitor, ref info))
         {
+            // 先取设备路径：友好名优先从路径里解析型号（原因见 GetMonitorFriendlyName）。
+            string devicePath = GetMonitorDevicePath(info.szDevice);
+
             MonitorInfo new_info = new MonitorInfo
             {
                 monitorArea = new Rect(info.rcMonitor.Left, info.rcMonitor.Top, info.rcMonitor.Right - info.rcMonitor.Left, info.rcMonitor.Bottom - info.rcMonitor.Top),
                 workArea = new Rect(info.rcWork.Left, info.rcWork.Top, info.rcWork.Right - info.rcWork.Left, info.rcWork.Bottom - info.rcWork.Top),
                 isPrimary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0,
                 deviceId = info.szDevice,
-                deviceName = GetMonitorFriendlyName(info.szDevice)
+                devicePath = devicePath,
+                deviceName = GetMonitorFriendlyName(info.szDevice, devicePath)
             };
 
             if (GetDpiForMonitor(hMonitor, MonitorDpiType.MDT_EFFECTIVE_DPI, out uint dpiX, out uint dpiY) == S_OK)
@@ -123,8 +140,28 @@ public static class MonitorUtil
             .ThenBy(m => m.monitorArea.Left)
             .ToList();
     }
-    private static string GetMonitorFriendlyName(string deviceId)
+    /// <summary>
+    /// 显示器友好名（型号）。优先从设备接口路径里解析，其次才问 <see cref="EnumDisplayDevices"/>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 为什么不信 <c>DeviceString</c>：本机实测两块不同型号的屏
+    /// （TCL2702 / SKG27C5）在这个字段上**都返回 <c>Generic PnP Monitor</c>**。
+    /// 于是设置页两项长得一模一样，模糊重连签名里的「型号」位也不携带任何信息。
+    /// </para>
+    /// <para>
+    /// 设备接口路径的第二段就是 Windows 从 EDID 记下的型号：
+    /// <c>\\?\DISPLAY#TCL2702#5&amp;2ec52e58&amp;0&amp;UID4355#{接口类GUID}</c> → <c>TCL2702</c>。
+    /// 免掉一次 P/Invoke，也没有失败分支。
+    /// </para>
+    /// </remarks>
+    private static string GetMonitorFriendlyName(string deviceId, string devicePath)
     {
+        if (MonitorTargetResolver.TryGetModelFromDevicePath(devicePath) is { } model)
+        {
+            return model;
+        }
+
         var displayDevice = new NativeMethods.DISPLAY_DEVICE
         {
             cb = Marshal.SizeOf<NativeMethods.DISPLAY_DEVICE>()
@@ -136,6 +173,121 @@ public static class MonitorUtil
             return displayDevice.DeviceString.Trim(); // "Eg: Dell U2720Q"
         }
         return "Unknown Monitor";
+    }
+
+    /// <summary>
+    /// 取监视器设备接口路径（<c>\\?\DISPLAY#…</c>）；取不到时退回 GDI 设备名。
+    /// </summary>
+    /// <remarks>
+    /// 必须带 <c>EDD_GET_DEVICE_INTERFACE_NAME</c>：不加这个标志，<c>DeviceID</c> 是
+    /// <c>MONITOR\默认监视器\{4d36e96e-…}\0001</c> 这种**设备类实例路径**，
+    /// 同一型号的两块屏会完全相同，做不了主键。
+    /// </remarks>
+    private static string GetMonitorDevicePath(string deviceId)
+    {
+        var displayDevice = new NativeMethods.DISPLAY_DEVICE
+        {
+            cb = Marshal.SizeOf<NativeMethods.DISPLAY_DEVICE>()
+        };
+
+        if (EnumDisplayDevices(deviceId, 0, ref displayDevice, EDD_GET_DEVICE_INTERFACE_NAME) &&
+            !string.IsNullOrWhiteSpace(displayDevice.DeviceID))
+        {
+            return displayDevice.DeviceID;
+        }
+
+        return deviceId;
+    }
+
+    /// <summary>
+    /// 当前所有显示器，按设置页展示顺序（主屏优先，再按 Left）排列。
+    /// </summary>
+    /// <remarks>
+    /// 顺序必须和 <see cref="GetMonitors"/> 完全一致：旧的序号字段是按这个顺序解释的，
+    /// 迁移时错一位就会把用户的目标指到另一块屏上。
+    /// </remarks>
+    public static IReadOnlyList<MonitorRef> GetMonitorRefs()
+    {
+        return ToMonitorRefs(GetMonitors());
+    }
+
+    /// <summary>把一批 <see cref="MonitorInfo"/> 转成可持久化的身份（不重新枚举）。</summary>
+    /// <remarks>
+    /// 调用方手里已经有一份列表时用这个：重复枚举会让「下拉框里的第 i 项」和
+    /// 「写设置时算出来的第 i 项」来自两次不同的快照，中间正好插拔显示器就会指错屏。
+    /// </remarks>
+    public static IReadOnlyList<MonitorRef> ToMonitorRefs(IReadOnlyList<MonitorInfo> monitors)
+    {
+        var refs = new List<MonitorRef>(monitors.Count);
+
+        foreach (var monitor in monitors)
+        {
+            refs.Add(ToMonitorRef(monitor));
+        }
+
+        return refs;
+    }
+
+    /// <summary>把 <see cref="MonitorInfo"/> 转成可持久化的身份。</summary>
+    public static MonitorRef ToMonitorRef(MonitorInfo monitor)
+    {
+        return new MonitorRef(
+            monitor.devicePath,
+            monitor.deviceId,
+            monitor.deviceName,
+            BuildSignature(monitor),
+            monitor.isPrimary);
+    }
+
+    /// <summary>模糊重连签名，见 <see cref="MonitorTargetResolver.BuildSignature"/>。</summary>
+    public static string BuildSignature(MonitorInfo monitor)
+    {
+        return MonitorTargetResolver.BuildSignature(
+            monitor.deviceName,
+            (int)monitor.monitorArea.Width,
+            (int)monitor.monitorArea.Height,
+            (int)monitor.monitorArea.X,
+            (int)monitor.monitorArea.Y);
+    }
+
+    /// <summary>
+    /// 按「设备路径」填充显示器下拉框，返回最终选中的下标。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="UpdateMonitorList(ComboBox, Func{int}, Action{int})"/> 的区别：
+    /// 这里**只负责展示**，不回调写设置。原因是「保存的目标当前不存在」时不能把
+    /// 选中项回写成主屏——那等于把用户的选择抹掉，显示器插回来也恢复不了。
+    /// 写入只应该发生在用户真的动手选的时候。
+    /// </remarks>
+    public static int FillMonitorComboBox(ComboBox comboBox, IReadOnlyList<MonitorInfo> monitors, string? selectedPath)
+    {
+        ArgumentNullException.ThrowIfNull(comboBox);
+        ArgumentNullException.ThrowIfNull(monitors);
+
+        comboBox.Items.Clear();
+
+        int selectedIndex = 0;
+        bool found = false;
+
+        for (int i = 0; i < monitors.Count; i++)
+        {
+            var monitor = monitors[i];
+            string name = $"{i + 1} ({monitor.deviceName})";
+            string contentName = monitor.isPrimary ? $"* {name}" : name;
+
+            comboBox.Items.Add(new ComboBoxItem { Content = contentName });
+
+            if (!found &&
+                !string.IsNullOrWhiteSpace(selectedPath) &&
+                string.Equals(monitor.devicePath, selectedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                selectedIndex = i;
+                found = true;
+            }
+        }
+
+        comboBox.SelectedIndex = monitors.Count == 0 ? -1 : selectedIndex;
+        return comboBox.SelectedIndex;
     }
 
     public static void UpdateMonitorList(ComboBox comboBox, Func<int> getSelectedIndex, Action<int> setSelectedIndex)

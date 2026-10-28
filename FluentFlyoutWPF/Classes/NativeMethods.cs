@@ -43,6 +43,16 @@ public static partial class NativeMethods
     internal const int MONITORINFOF_PRIMARY = 1;
     internal const int S_OK = 0;
 
+    /// <summary>
+    /// <see cref="EnumDisplayDevices"/> 的 <c>dwFlags</c>：让 <c>DeviceID</c> 返回
+    /// **监视器设备接口路径**（<c>\\?\DISPLAY#厂商型号#实例</c>），而不是显卡输出设备。
+    /// </summary>
+    /// <remarks>
+    /// 不加这个标志时 <c>DeviceID</c> 是 <c>MONITOR\XXX\{4d36e96e-…}\0001</c> 形式的设备实例路径，
+    /// 同一型号的两块屏会重名；加上之后才带上接口实例，能区分「接在哪个口上的哪一块」。
+    /// </remarks>
+    internal const uint EDD_GET_DEVICE_INTERFACE_NAME = 0x00000001;
+
     // DWM Attributes
     internal const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
 

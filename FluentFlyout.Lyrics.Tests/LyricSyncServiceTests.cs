@@ -14,6 +14,14 @@ namespace FluentFlyout.Lyrics.Tests;
 
 public sealed class LyricSyncServiceTests
 {
+    /// <summary>
+    /// 等待后台信号（稳定化窗口、协调器往返、重试定时器）的上限。
+    /// 这些等待只负责「等后台任务起步」，不参与任何断言；信号始终不来时测试仍然会失败。
+    /// 原先用 1 秒，在共享 CI runner 上会被文件扫描与杀软拖爆：master 上
+    /// LocalMediaIndexTests 与本文件的用例先后在 1 秒预算内超时，因此统一放宽到 10 秒。
+    /// </summary>
+    private static readonly TimeSpan SignalTimeout = TimeSpan.FromSeconds(10);
+
     [Fact]
     public async Task RetriesTransientFailureAfterTwoSecondsAndPublishesRecoveredLyrics()
     {
@@ -273,7 +281,7 @@ public sealed class LyricSyncServiceTests
             global::System.Threading.Channels.Channel.CreateUnbounded<RetryTimer>();
         public bool HasPendingTimer => _timers.Reader.TryPeek(out _);
         public async Task<RetryTimer> NextTimerAsync() =>
-            await _timers.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
+            await _timers.Reader.ReadAsync().AsTask().WaitAsync(SignalTimeout);
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = new RetryTimer(callback, state, dueTime);
@@ -368,7 +376,7 @@ public sealed class LyricSyncServiceTests
         var track = CreateTrack();
 
         await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, track));
-        await coordinator.SearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.SearchStarted.Task.WaitAsync(SignalTimeout);
         await Task.Delay(20);
 
         var firstSegmentHalf = await service.GetDisplayFrameAsync(
@@ -403,7 +411,7 @@ public sealed class LyricSyncServiceTests
         var track = CreateTrack();
 
         await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, track));
-        await coordinator.SearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.SearchStarted.Task.WaitAsync(SignalTimeout);
         await Task.Delay(20);
 
         var half = await service.GetDisplayFrameAsync(
@@ -433,7 +441,7 @@ public sealed class LyricSyncServiceTests
         var track = CreateTrack();
 
         await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, track));
-        await coordinator.SearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.SearchStarted.Task.WaitAsync(SignalTimeout);
         await Task.Delay(20);
 
         var first = await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, track));
@@ -463,7 +471,7 @@ public sealed class LyricSyncServiceTests
         var track = CreateTrack();
 
         await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, track));
-        await coordinator.SearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.SearchStarted.Task.WaitAsync(SignalTimeout);
         await Task.Delay(20);
 
         var frame = await service.GetDisplayFrameAsync(
@@ -484,7 +492,7 @@ public sealed class LyricSyncServiceTests
 
         await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, inheritedTrack));
         await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, correctedTrack));
-        await coordinator.SearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.SearchStarted.Task.WaitAsync(SignalTimeout);
         await Task.Delay(20);
 
         Assert.Equal(1, coordinator.ResolveCallCount);
@@ -504,14 +512,14 @@ public sealed class LyricSyncServiceTests
         var correctedSnapshot = new PlaybackSnapshot(true, TimeSpan.Zero, correctedTrack);
 
         await service.GetDisplayFrameAsync(inheritedSnapshot);
-        await coordinator.FirstSearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.FirstSearchStarted.Task.WaitAsync(SignalTimeout);
 
         await service.GetDisplayFrameAsync(correctedSnapshot);
-        await coordinator.FirstSearchCanceled.Task.WaitAsync(TimeSpan.FromSeconds(1));
-        await coordinator.SecondSearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.FirstSearchCanceled.Task.WaitAsync(SignalTimeout);
+        await coordinator.SecondSearchStarted.Task.WaitAsync(SignalTimeout);
 
         coordinator.CompleteSecond(CreateResolved("corrected", "Corrected lyric"));
-        await coordinator.SecondSearchReturned.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.SecondSearchReturned.Task.WaitAsync(SignalTimeout);
         await Task.Delay(20);
         var correctedFrame = await service.GetDisplayFrameAsync(correctedSnapshot);
 
@@ -522,7 +530,7 @@ public sealed class LyricSyncServiceTests
             coordinator.SearchDurations);
 
         coordinator.CompleteFirst(CreateResolved("stale", "Stale lyric"));
-        await coordinator.FirstSearchReturned.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.FirstSearchReturned.Task.WaitAsync(SignalTimeout);
         await Task.Delay(20);
         var latestFrame = await service.GetDisplayFrameAsync(correctedSnapshot);
 
@@ -570,13 +578,13 @@ public sealed class LyricSyncServiceTests
         var secondSnapshot = new PlaybackSnapshot(true, TimeSpan.Zero, CreateTrack("Second track"));
 
         await service.GetDisplayFrameAsync(firstSnapshot);
-        await coordinator.FirstSearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.FirstSearchStarted.Task.WaitAsync(SignalTimeout);
 
         var secondFrame = await service.GetDisplayFrameAsync(secondSnapshot);
         Assert.Equal("Second lyric", secondFrame.CurrentLine);
 
         coordinator.CompleteFirstSearch();
-        await coordinator.FirstSearchReturned.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.FirstSearchReturned.Task.WaitAsync(SignalTimeout);
         await Task.Delay(20);
 
         var latestFrame = await service.GetDisplayFrameAsync(secondSnapshot);
@@ -594,12 +602,12 @@ public sealed class LyricSyncServiceTests
         var track = CreateTrack();
 
         await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, track));
-        await coordinator.SearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.SearchStarted.Task.WaitAsync(SignalTimeout);
 
         var applied = service.TryApplyResolvedLyrics(track, CreateResolved("manual", "Manual lyric"));
 
         Assert.True(applied);
-        await coordinator.SearchCancelled.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.SearchCancelled.Task.WaitAsync(SignalTimeout);
         var frame = await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, track));
         Assert.Equal("Manual lyric", frame.CurrentLine);
     }
@@ -614,7 +622,7 @@ public sealed class LyricSyncServiceTests
         var track = CreateTrack();
 
         await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, track));
-        await coordinator.SearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.SearchStarted.Task.WaitAsync(SignalTimeout);
 
         var applied = service.TryApplyResolvedLyrics(
             track with { Title = "A different song" },
@@ -634,7 +642,7 @@ public sealed class LyricSyncServiceTests
         var initialTrack = CreateTrack(duration: TimeSpan.FromSeconds(242));
 
         await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, initialTrack));
-        await coordinator.SearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.SearchStarted.Task.WaitAsync(SignalTimeout);
         await Task.Delay(20);
         Assert.True(service.TryApplyResolvedLyrics(initialTrack, CreateResolved("manual", "Manual lyric")));
 
@@ -659,11 +667,11 @@ public sealed class LyricSyncServiceTests
             Track: CreateTrack());
 
         await service.GetDisplayFrameAsync(snapshot);
-        await coordinator.SearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.SearchStarted.Task.WaitAsync(SignalTimeout);
 
         service.Dispose();
 
-        await coordinator.SearchCancelled.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await coordinator.SearchCancelled.Task.WaitAsync(SignalTimeout);
         Assert.True(coordinator.IsDisposed);
     }
 

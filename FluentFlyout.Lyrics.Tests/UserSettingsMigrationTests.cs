@@ -155,6 +155,53 @@ public class UserSettingsMigrationTests
         Assert.DoesNotContain("LyricsOffsetText", xml, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// 目标显示器的两个新字段在旧配置里不存在时，必须是**空串**而不是 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// 空串的语义是「跟随主屏」，<c>null</c> 的语义是「有人忘了初始化」。
+    /// 后者不会当场炸，而是会在 <c>MonitorUtil.FillMonitorComboBox</c> 或
+    /// <c>MonitorTargetResolver.Resolve</c> 的某条分支上炸——离这里很远，
+    /// 排查成本全在「为什么设置页打不开」上。
+    /// </remarks>
+    [Fact]
+    public void DisplayTargetFieldsDefaultToEmptyStringWhenAbsent()
+    {
+        var settings = Deserialize(LegacySettingsXml);
+
+        Assert.Equal(string.Empty, settings.TaskbarWidgetTargetMonitorId);
+        Assert.Equal(string.Empty, settings.TaskbarWidgetTargetMonitorSignature);
+    }
+
+    /// <summary>
+    /// 新字段要能正常往返：写进去、序列化、再反序列化，设备路径不能变形。
+    /// </summary>
+    /// <remarks>
+    /// 设备路径里有 <c>#</c>、<c>&amp;</c>、<c>?</c> 这些 XML 敏感字符
+    /// （<c>\\?\DISPLAY#TCL2702#5&amp;2ec52e58&amp;0&amp;UID4355</c>），
+    /// 一旦被当成标记/实体处理，读回来的就是另一块屏的路径——而它**看起来**仍然像个合法路径，
+    /// 只会表现为「每次启动都要重新选显示器」。
+    /// </remarks>
+    [Fact]
+    public void DisplayTargetDevicePathRoundTripsThroughXml()
+    {
+        const string devicePath = @"\\?\DISPLAY#TCL2702#5&2ec52e58&0&UID4355";
+        const string signature = "R27Q71|2560x1440|0,0";
+
+        var serializer = new XmlSerializer(typeof(UserSettings));
+        using var writer = new StringWriter();
+        serializer.Serialize(writer, new UserSettings
+        {
+            TaskbarWidgetTargetMonitorId = devicePath,
+            TaskbarWidgetTargetMonitorSignature = signature,
+        });
+
+        var restored = Deserialize(writer.ToString());
+
+        Assert.Equal(devicePath, restored.TaskbarWidgetTargetMonitorId);
+        Assert.Equal(signature, restored.TaskbarWidgetTargetMonitorSignature);
+    }
+
     [Fact]
     public void OffsetIsNotPersistedToSettingsXml()
     {
@@ -171,8 +218,7 @@ public class UserSettingsMigrationTests
 
     [Fact]
     public void CorruptedLyricsValuesFallBackInsteadOfThrowing()
-    {
-        // 手改配置文件 / 跨版本回退都可能造出越界值。
+    {        // 手改配置文件 / 跨版本回退都可能造出越界值。
         // 反序列化本身不会校验范围（XmlSerializer 只管类型），
         // 但读取后不能留下一个「会让面板算出负行高」的脏值——
         // 校验发生在 setter 与 LyricsPanelMetrics.Create 两处。

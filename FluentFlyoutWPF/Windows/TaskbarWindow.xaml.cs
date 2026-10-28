@@ -77,7 +77,44 @@ public partial class TaskbarWindow : Window
     private AutomationElement? _taskbarFrameElement;
     // reference to main window for flyout functions
     private MainWindow? _mainWindow;
-    private int _lastSelectedMonitor = -1;
+
+    /// <summary>
+    /// 本窗口这次要显示在哪块屏上。每次 <see cref="UpdatePosition"/> 都重新解析——
+    /// 显示器随时可能被拔掉或接回来，缓存一分钟就会显示在错的屏上。
+    /// </summary>
+    private MonitorRef? _target;
+
+    /// <summary>
+    /// 上一次解析结果的指纹（状态 + 目标路径），只用来「变了才打日志」。
+    ///
+    /// 不能只比状态：<c>TargetMissing</c> 下面目标会从「2 号屏」换成主屏，
+    /// 状态一样但实际落点变了，这种也必须记一条。
+    /// </summary>
+    private string _lastResolutionLogKey = string.Empty;
+
+    /// <summary>上一次「目标屏没有任务栏」告警对应的设备路径，用于判重（该路径每 1.5s 会被重查一次）。</summary>
+    private string? _lastMissingTaskbarWarning;
+
+    /// <summary>当前显示器数量，供「只有一条任务栏时不用找第二块」的短路判断。</summary>
+    private int _monitorCount;
+
+    /// <summary>
+    /// 待写回设置的目标（迁移 / 签名恢复的产物）。
+    ///
+    /// **不能在解析过程中直接写**：写设置会触发 OnChanged → 立即重排 → 又回到解析，
+    /// 一圈下来多跑一整轮布局。统一在定位结束后 flush 一次。
+    /// </summary>
+    private MonitorRef? _targetToPersist;
+
+    /// <summary>
+    /// 上一次**排完版**时的目标设备路径，用于让 UIA/托盘句柄这类缓存跟着换屏失效。
+    /// </summary>
+    /// <remarks>
+    /// 原来存的是设置里的序号（<c>_lastSelectedMonitor</c>），序号在插拔后可能「看起来没变
+    /// 但指向了另一块屏」，缓存就不会失效。改成设备路径后语义才对齐。
+    /// </remarks>
+    private string? _lastPositionedTargetKey;
+
     private IntPtr _lastTaskbarHandle;
     private bool _positionUpdateInProgress;
     private bool _isClosing;
@@ -181,30 +218,166 @@ public partial class TaskbarWindow : Window
             Dispatcher.BeginInvoke(() => UpdatePosition(), DispatcherPriority.Background);
     }
 
+    /// <summary>
+    /// 解析「这次该显示在哪块屏」，顺便把迁移/重连的产物排进待写队列。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 每次定位都重新解析，不做缓存：显示器可能在两次 tick 之间被拔掉或接回来，
+    /// 缓存住「上一次的结论」就等于把 bug 换个地方藏。
+    /// </para>
+    /// <para>
+    /// **不在这里写设置**。写 <c>TaskbarWidgetTargetMonitorId</c> 会触发
+    /// <c>OnChanged → 立即重排</c>，而此刻我们正在定位流程中间，会重入整套布局。
+    /// 需要落盘的结论先放进 <see cref="_targetToPersist"/>，等这一轮排完再 flush。
+    /// </para>
+    /// </remarks>
+    private MonitorRef? ResolveTarget()
+    {
+        var monitors = MonitorUtil.GetMonitorRefs();
+        _monitorCount = monitors.Count;
+
+        var settings = SettingsManager.Current;
+        var resolution = MonitorTargetResolver.Resolve(
+            monitors,
+            settings.TaskbarWidgetTargetMonitorId,
+            settings.TaskbarWidgetTargetMonitorSignature,
+            settings.TaskbarWidgetSelectedMonitor);
+
+        LogResolution(resolution);
+        QueueTargetPersistIfNeeded(resolution);
+
+        _target = resolution.Target;
+        return _target;
+    }
+
+    /// <summary>
+    /// 只有「解析出来的目标」和「设置里存的」不一致时才排队写回。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="MonitorResolution.ShouldPersistTarget"/> 说「这次结论值得记住」，
+    /// 但值没变就没必要写——写同样的值虽然不会触发通知（<c>SetProperty</c> 会挡），
+    /// 但每个 tick 都走一遍字符串比较比走一遍设置写入便宜得多。
+    /// </remarks>
+    private void QueueTargetPersistIfNeeded(MonitorResolution resolution)
+    {
+        if (!resolution.ShouldPersistTarget || resolution.Target is not { } target)
+            return;
+
+        var settings = SettingsManager.Current;
+        bool changed =
+            !string.Equals(settings.TaskbarWidgetTargetMonitorId, target.DevicePath, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(settings.TaskbarWidgetTargetMonitorSignature, target.Signature, StringComparison.OrdinalIgnoreCase);
+
+        if (changed)
+            _targetToPersist = target;
+    }
+
+    /// <summary>
+    /// 把 <see cref="_targetToPersist"/> 落到设置里。只在「这一轮已经排完版」之后调用。
+    /// </summary>
+    private void FlushPendingTargetPersist()
+    {
+        if (_targetToPersist is not { } target)
+            return;
+
+        _targetToPersist = null;
+
+        var settings = SettingsManager.Current;
+        if (string.Equals(settings.TaskbarWidgetTargetMonitorId, target.DevicePath, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(settings.TaskbarWidgetTargetMonitorSignature, target.Signature, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        Logger.Info($"Persisting taskbar widget target display: '{target.FriendlyName}' ({target.DevicePath})");
+
+        // 先写签名再写主键：主键的 OnChanged 会立刻触发一次重排，
+        // 那一刻签名必须已经就位，否则模糊重连会读到上一条记录。
+        settings.TaskbarWidgetTargetMonitorSignature = target.Signature;
+        settings.TaskbarWidgetTargetMonitorId = target.DevicePath;
+    }
+
+    /// <summary>解析结果变化时才打日志，避免 1.5s 一条把日志刷满。</summary>
+    private void LogResolution(MonitorResolution resolution)
+    {
+        string path = resolution.Target?.DevicePath ?? string.Empty;
+        string key = $"{resolution.Status}|{path}";
+
+        if (string.Equals(_lastResolutionLogKey, key, StringComparison.Ordinal))
+            return;
+
+        _lastResolutionLogKey = key;
+
+        string name = resolution.Target?.FriendlyName ?? "none";
+
+        switch (resolution.Status)
+        {
+            case MonitorResolutionStatus.TargetMissing:
+                // 这是「不再静默换屏」的关键：用户选的那块屏不在了，控件临时回主屏，
+                // 但设置里的选择**保留着**（ShouldPersistTarget 为 false），插回来自动恢复。
+                Logger.Warn($"Saved taskbar widget display is not connected; showing on '{name}' until it returns.");
+                break;
+
+            case MonitorResolutionStatus.RecoveredBySignature:
+                Logger.Info($"Taskbar widget display re-identified by signature: '{name}' ({path}).");
+                break;
+
+            case MonitorResolutionStatus.MigratedFromIndex:
+                Logger.Info($"Taskbar widget display migrated from legacy index to '{name}' ({path}).");
+                break;
+
+            case MonitorResolutionStatus.NoMonitors:
+                Logger.Warn("No monitors reported yet; taskbar widget keeps the main taskbar.");
+                break;
+
+            default:
+                Logger.Debug($"Taskbar widget display resolved to '{name}' ({resolution.Status}).");
+                break;
+        }
+    }
+
+    /// <summary>这条任务栏是不是在目标显示器上。</summary>
+    /// <remarks>
+    /// 比 <c>devicePath</c> 而不是 <c>deviceId</c>（<c>\\.\DISPLAY1</c>）：后者只是 GDI 名字，
+    /// 两块同型号屏在换线/换口后可能互换，而设备接口路径带着接口实例，不会。
+    /// </remarks>
+    private static bool IsTaskbarOnMonitor(IntPtr taskbarHandle, MonitorRef target)
+    {
+        if (taskbarHandle == IntPtr.Zero)
+            return false;
+
+        var monitor = MonitorUtil.GetMonitor(taskbarHandle);
+        return !string.IsNullOrEmpty(monitor.devicePath) &&
+               string.Equals(monitor.devicePath, target.DevicePath, StringComparison.OrdinalIgnoreCase);
+    }
+
     private IntPtr GetSelectedTaskbarHandle(out bool isMainTaskbarSelected)
     {
-        var monitors = MonitorUtil.GetMonitors();
-        var selectedMonitor = monitors[Math.Clamp(SettingsManager.Current.TaskbarWidgetSelectedMonitor, 0, monitors.Count - 1)];
+        var selectedMonitor = ResolveTarget();
         isMainTaskbarSelected = true;
 
         // Get the main taskbar and check if it is on the selected monitor.
         var mainHwnd = FindWindow("Shell_TrayWnd", null);
-        if (MonitorUtil.GetMonitor(mainHwnd).deviceId == selectedMonitor.deviceId)
+        if (selectedMonitor is null || IsTaskbarOnMonitor(mainHwnd, selectedMonitor))
             return mainHwnd;
 
-        if (monitors.Count == 1)
+        if (_monitorCount == 1)
             return mainHwnd;
 
         isMainTaskbarSelected = false;
-        if (monitors.Count == 2)
+        if (_monitorCount == 2)
         {
             var hwnd = FindWindow("Shell_SecondaryTrayWnd", null);
-            if (MonitorUtil.GetMonitor(hwnd).deviceId == selectedMonitor.deviceId)
+            if (IsTaskbarOnMonitor(hwnd, selectedMonitor))
             {
                 return hwnd;
             }
             else
             {
+                // 「在所有显示器上显示任务栏」被关掉时本来就没有副栏，
+                // 这是系统设置而不是缺陷——但目标屏上确实没有可挂的栏，得留痕。
+                WarnMissingTaskbarOnTarget(selectedMonitor);
                 isMainTaskbarSelected = true;
                 return mainHwnd;
             }
@@ -217,13 +390,13 @@ public partial class TaskbarWindow : Window
         StringBuilder className = new(256); // 256 is the maximum class name length
         IntPtr checkWindowClass(IntPtr wnd)
         {
-            var len = GetClassName(wnd, className, className.Capacity);
-            if (className.Equals("Shell_SecondaryTrayWnd"))
+            // 必须 ToString() 比较：StringBuilder.Equals(string) 走的是 object.Equals，
+            // 永远返回 false —— 旧写法在 3 块屏以上时一次都匹配不到，直接退回主屏。
+            if (GetClassName(wnd, className, className.Capacity) > 0 &&
+                className.ToString() == "Shell_SecondaryTrayWnd" &&
+                IsTaskbarOnMonitor(wnd, selectedMonitor))
             {
-                if (MonitorUtil.GetMonitor(wnd).deviceId == selectedMonitor.deviceId)
-                {
-                    return wnd;
-                }
+                return wnd;
             }
             return IntPtr.Zero;
         }
@@ -261,9 +434,25 @@ public partial class TaskbarWindow : Window
         if (secondHwnd != IntPtr.Zero)
             return secondHwnd;
 
-        // Logger.Debug($"No taskbar found on the selected monitor. Using the main taskbar.");
+        WarnMissingTaskbarOnTarget(selectedMonitor);
         isMainTaskbarSelected = true;
         return mainHwnd;
+    }
+
+    /// <summary>
+    /// 目标屏上没有可挂的任务栏时留一条日志，**同一块屏只留一次**。
+    /// </summary>
+    /// <remarks>
+    /// 这条路径由 1.5s 定时器反复走到，不判重的话日志会被刷满，
+    /// 真正有用的信息反而被埋掉。
+    /// </remarks>
+    private void WarnMissingTaskbarOnTarget(MonitorRef target)
+    {
+        if (string.Equals(_lastMissingTaskbarWarning, target.DevicePath, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _lastMissingTaskbarWarning = target.DevicePath;
+        Logger.Warn($"No taskbar found on target display '{target.FriendlyName}'; falling back to the main taskbar.");
     }
 
     private void SetupWindow()
@@ -424,6 +613,37 @@ on_error:
         _pendingAutomationTasks.Clear();
     }
 
+    /// <summary>
+    /// 缓存（托盘句柄 / UIA 元素）是不是还属于「当前这个目标屏」。
+    /// </summary>
+    /// <remarks>
+    /// 换屏后这些句柄全部失效：<c>TrayNotifyWnd</c> 是任务栏的子窗口，
+    /// UIA 元素挂在 `taskbarHandle` 下面，父窗口变了旧引用就指向另一条栏。
+    /// 用设备路径比较而不是设置里的序号——序号插拔后可能「看起来没变但指向了另一块屏」。
+    /// </remarks>
+    private bool IsPositionedForCurrentTarget()
+    {
+        return string.Equals(_lastPositionedTargetKey, _target?.DevicePath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 设置里的目标显示器变了：立刻按新目标重排，不等 1.5s 定时器。
+    /// </summary>
+    /// <remarks>
+    /// 刻意**不走** <c>MainWindow.UpdateTaskbar</c>：那条路会顺手重刷一遍媒体 UI
+    /// （标题/封面/按钮），切换屏幕时完全没必要，还会在没在播放时把文字刷成 <c>-</c>。
+    /// </remarks>
+    public void ApplyTargetChange()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(ApplyTargetChange, DispatcherPriority.Send);
+            return;
+        }
+
+        UpdatePosition();
+    }
+
     private void CalculateAndSetPosition(IntPtr taskbarHandle, IntPtr taskbarWindowHandle, bool isMainTaskbarSelected)
     {
         // Prevent overlapping updates - if a previous update is still running
@@ -503,7 +723,11 @@ on_error:
 
             UpdateWindowRegion(taskbarWindowHandle, wRect, vRect);
 
-            _lastSelectedMonitor = SettingsManager.Current.TaskbarWidgetSelectedMonitor;
+            // 这一轮已经排完版，目标才算「真正生效」——UIA/托盘句柄缓存以它为失效依据。
+            _lastPositionedTargetKey = _target?.DevicePath;
+
+            // 迁移/签名重连的产物在这里落地（不能放在解析里，会重入布局）。
+            FlushPendingTargetPersist();
         }
         finally
         {
@@ -659,7 +883,7 @@ on_error:
                         }
 
                         // Primary taskbar: TrayNotifyWnd (original approach for horizontal, fallback for vertical)
-                        if (_trayHandle == IntPtr.Zero || _lastSelectedMonitor != SettingsManager.Current.TaskbarWidgetSelectedMonitor)
+                        if (_trayHandle == IntPtr.Zero || !IsPositionedForCurrentTarget())
                             _trayHandle = FindWindowEx(taskbarHandle, IntPtr.Zero, "TrayNotifyWnd", null);
 
                         if (_trayHandle != IntPtr.Zero)
@@ -1140,7 +1364,7 @@ on_error:
         try
         {
             // reset if monitor changed
-            if (_lastSelectedMonitor != SettingsManager.Current.TaskbarWidgetSelectedMonitor)
+            if (!IsPositionedForCurrentTarget())
                 elementCache = null;
 
             // find widget in XAML
