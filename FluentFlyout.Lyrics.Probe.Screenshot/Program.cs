@@ -108,6 +108,16 @@ internal static class Program
             return LyricsRepositionProbe.Run() == 0 ? 0 : 1;
         }
 
+        // --orientations：四方向任务栏 × 3 DPI × 深浅的位置矩阵（24 张）。
+        //
+        // 单独一支的理由：它验的是**位置**，不是排版。小组件画错位置时
+        // 每张图里的歌词都清清楚楚，主矩阵与装配链都可能全绿——只有把
+        // 「是否越界 / 是否居中 / 朝向对不对」当判据才抓得住。
+        if (args.Any(a => string.Equals(a, "--orientations", StringComparison.OrdinalIgnoreCase)))
+        {
+            return OrientationMatrixProbe.Run();
+        }
+
         var outputDirectory = Path.Combine(AppContext.BaseDirectory, "shots");
         if (Directory.Exists(outputDirectory))
         {
