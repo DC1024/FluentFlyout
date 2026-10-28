@@ -193,6 +193,62 @@ public sealed class TaskbarVerticalLyricsWiringTests
     }
 
     [Fact]
+    public void EnglishLineWithWordsWiderThanTheColumnIsNotClipped()
+    {
+        // 真机缺陷（左侧竖排任务栏 + 英文歌词）：屏幕上是
+        // 「My / scree / n is / glowi / ng like a / midni」——句子在半个词上断掉，
+        // 后面的「ght sea」整段消失，而且没有省略号。
+        //
+        // 成因不在宿主：竖向折行宽度只有 37.5 DIP，英文单词几乎全部比它宽。
+        // 旧实现用 FormattedText 量折行高度，而 FormattedText **不切词**
+        // （超宽词照样算一行、允许溢出），TextBlock 的 TextWrapping.Wrap **会切词**。
+        // 同一段 40 字符的文本：FormattedText 量出 7 行（121.03 DIP），
+        // TextBlock 实际排 9 行（155.61 DIP）——Canvas 矮两行，尾巴被剪。
+        //
+        // 所以断言必须落在「容器高度 ≥ 文本真实高度」上，而不是「高度是个正数」：
+        // 前者才会在两种断行策略分叉时变红。
+        const string Line = "My screen is glowing like a midnight sea";
+
+        var (containerHeight, textHeight, panelHeight, contentHeight) = RunOnStaThread(() =>
+        {
+            var (control, _) = CreateVerticalLyricsControl();
+
+            var host = new Canvas { Width = 48, Height = 1440 };
+            host.Children.Add(control);
+
+            control.Width = 240;
+            control.Height = DefaultCrossSize;
+            control.Measure(new Size(240, DefaultCrossSize));
+            control.Arrange(new Rect(0, 0, 240, DefaultCrossSize));
+            control.UpdateLayout();
+
+            control.ApplyLyricDocument(new[] { new LyricLine(TimeSpan.Zero, Line) });
+            control.UpdateLyricsFrame(new LyricDisplayFrame(Line, "屏幕荧光闪烁，如深夜的海洋", "标题", 0.3));
+
+            var (logicalWidth, logicalHeight) = control.CalculateSize(dpiScale: 1.0, availableWidth: 1440);
+            control.Width = logicalWidth;
+            control.Height = logicalHeight;
+            control.Measure(new Size(logicalWidth, logicalHeight));
+            control.Arrange(new Rect(0, 0, logicalWidth, logicalHeight));
+            control.UpdateLayout();
+
+            var panel = (LyricsPanel)control.FindName("LyricsPanel");
+            var container = (Canvas)panel.FindName("PrimaryContainer");
+            var text = (TextBlock)panel.FindName("PrimaryText");
+
+            return (container.Height, text.ActualHeight, panel.Height, panel.VerticalContentHeight);
+        });
+
+        Assert.True(containerHeight >= textHeight - 0.5,
+            $"主行容器高 {containerHeight:F1} DIP，文本实际排了 {textHeight:F1} DIP——" +
+            $"差 {(textHeight - containerHeight):F1} DIP 会被 ClipToBounds 剪掉，" +
+            "屏幕上表现为「英文句子在半个词上断掉」（量折行高度时用了不切词的 FormattedText）。");
+
+        Assert.True(panelHeight >= contentHeight - 0.5,
+            $"面板高 {panelHeight:F1} DIP，内容要 {contentHeight:F1} DIP——宿主没拿到真实折行高度。");
+    }
+
+    [Fact]
     public void RepeatedLayoutKeepsWidthStable()
     {
         // CalculateSize 被 1.5s 定时器、换歌、每次歌词换行反复调用。
