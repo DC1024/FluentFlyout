@@ -201,6 +201,7 @@ public sealed class LyricDiagnosticRunnerTests
             sources,
             Array.Empty<ILyricPayloadDecoder>(),
             [new PlainTextLyricParser()],
+            mappingResolver: new PassThroughMappingResolver(),
             trustPolicy: new LyricProviderTrustPolicy(
                 KnownLyricProviders.OnlineTrustOrder.Where(providerId => sources.Any(source => source.ProviderId == providerId)),
                 sources.Select(source => source.ProviderId)),

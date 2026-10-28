@@ -111,6 +111,7 @@ public sealed class ResolvedLyricCacheCoordinatorTests
         using var coordinator = new LyricResolutionCoordinator(
             [source], [], [new PlainTextParser()], new EmptyPipelineCache(),
             trustPolicy: new LyricProviderTrustPolicy([source.ProviderId], [source.ProviderId]),
+            mappingResolver: new PassThroughMappingResolver(),
             resolvedLyricCache: cache,
             sourceSelectionResolver: _ => new LyricSourceSelection([], "all-disabled"));
 

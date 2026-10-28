@@ -90,6 +90,7 @@ public sealed class LyricResolutionTraceTests
             [new PlainTextLyricParser()],
             cache,
             sourceTimeout: TimeSpan.FromSeconds(1),
+            mappingResolver: new PassThroughMappingResolver(),
             traceSink: trace);
 
         var resolved = await coordinator.ResolveAsync(track);
@@ -190,6 +191,7 @@ public sealed class LyricResolutionTraceTests
             [new PlainTextLyricParser()],
             new RecordingLyricPipelineCache(),
             trustPolicy: new LyricProviderTrustPolicy([KnownLyricProviders.QQMusic], [KnownLyricProviders.QQMusic]),
+            mappingResolver: new PassThroughMappingResolver(),
             traceSink: new ThrowingTraceSink());
 
         var resolved = await coordinator.ResolveAsync(track);

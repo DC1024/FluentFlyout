@@ -754,6 +754,43 @@ R1 的验收口径是「播放 60s，整窗重排 < 20 次」。这句话在变�
 但歌词路径是事件驱动的：换歌那次请求恰好落在一次 UIA 慢查询里就会被吞掉，
 表现为「新宽度要等 1.5s 才生效」，而日志里一条错误都没有。
 
+#### 7.2.10 一个从未被创建过的表
+
+`app_error` 里每隔十几秒一条 `SQLite Error 1: 'no such table: SongSearchMaps'`，
+一场 90 秒的播放能刷出 11 条。症状看着像「查询写错了」，实际是**这张表从来没被建过**。
+
+现场有三样东西可以直接对上：
+
+| 观察 | 含义 |
+|---|---|
+| `%APPDATA%\TaskbarLyrics\database\song_maps.db` 是 **0 字节** | 文件在，结构不在 |
+| 文件时间戳 = 程序第一次运行的时间，之后再没变过 | 建了文件就再没人碰它 |
+| 同目录的 `user_data.db` 有 24 KB、表齐全 | 另一路持久化是好的 |
+
+**根因**：`SongSearchMapDbContext.InitializeDatabase()` 在全仓**没有任何调用点**
+（`grep InitializeDatabase` 只有定义那一行）。所以 `EnsureCreated()` 一次都没跑过，
+EF 只是在 `UseSqlite` 打开数据源时顺手把 0 字节文件建了出来。对照组
+`TrackLyricOffsetStore.Load()` 里是调了 `EnsureCreated()` 的，这就是两个库命运不同的原因。
+
+**修法：谁读谁负责建表。** `SongSearchMapResolver.Resolve` 首次调用时做一次幂等的
+`EnsureCreated`（`_schemaReady` 标记 + 双检锁），不再依赖任何外部启动钩子。
+不放到 App 启动里补一行调用的理由是**入口有两个**——`LyricResolutionCoordinator`
+构造时 `new` 一个、`LyricDiagnosticRunner` 自己也 `new` 一个——靠外部初始化迟早再漏一次。
+
+**降级口径**：映射库只是「别名纠正」这层可选增强，本仓库当前甚至还没有写入它的入口。
+所以建表失败不能拖住歌词解析：`Resolve` 直接返回 `LyricMapping.Unchanged(track)`，
+并且**首次失败写一条 ERROR，之后降到 Debug，同时静默 10 分钟再重试**。
+解析在每次换歌、每次搜索尝试时都会被调用——同一故障每次都写 ERROR，
+错误日志会把这个真问题埋掉（那 11 条就是证据）。
+
+**一个坑**：0 字节文件不等于无效数据库。EF 打开数据源时就把文件建出来了，所以
+「文件存在」不能当作「表已建」的证据；反过来，`EnsureCreated` 面对 0 字节文件
+是能正常补齐结构的，不需要先删文件。这一点用 `ResolveCreatesSchemaWhenDatabaseFileIsEmpty`
+钉住了——测试里先写一个 0 字节文件，再断言建表成功，复现的就是线上那份现场。
+
+**测试（4 个）**：全新库 / 0 字节库 / 命中已有映射 / 库彻底不可用时降级。
+最后一个把目录本身当数据源，验证异常不会漏到解析链路上。
+
 ### 7.3 归档截图
 
 `Probe.Screenshot` 每次生成 72 张（另有 `--assembly` 的 8 张整机图），代表性
