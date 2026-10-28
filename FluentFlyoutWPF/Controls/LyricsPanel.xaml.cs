@@ -1279,6 +1279,12 @@ public partial class LyricsPanel : UserControl
             PrimaryScanText.Width = double.NaN;
             SecondaryText.Width = double.NaN;
 
+            // 面板自身的宽度也要清掉：竖向时宿主的 CalculateSize 会把它写成
+            // 「任务栏短边」（40/28 DIP），横向必须回到 Auto 交给宿主重写，
+            // 否则会在一帧里按 40 宽折行，长句被切。
+            Width = double.NaN;
+            _lastWrapViewport = -1;
+
             if (_hasMetrics)
             {
                 PrimaryContainer.Height = _metrics.LineHeight;
@@ -1351,8 +1357,22 @@ public partial class LyricsPanel : UserControl
         if (viewport <= 0)
         {
             // 还没布局完成（面板宽度尚未由宿主写入）。SizeChanged 会再来一次。
+            //
+            // 这条早退是「竖向一个字都不显示」的唯一入口，所以留一条日志：
+            // 真机上如果又出现竖向空白，日志里应当只有一次，且紧跟着
+            // 宿主写入宽度后的第二次调用。若持续打印，说明宿主没写宽度。
+            if (!_verticalViewportWarned)
+            {
+                _verticalViewportWarned = true;
+                Logger.Debug(
+                    "Vertical lyrics: wrap viewport is {0} (panel ActualWidth={1}, Width={2}); delaying layout until the host writes a finite width.",
+                    viewport, ActualWidth, Width);
+            }
+
             return;
         }
+
+        _verticalViewportWarned = false;
 
         _lastWrapViewport = viewport;
 
@@ -1492,6 +1512,13 @@ public partial class LyricsPanel : UserControl
     /// 不参与正确性判断——正确性只依赖 <see cref="UpdateVerticalWrapLayout"/> 被调用。
     /// </summary>
     private double _lastWrapViewport = -1;
+
+    /// <summary>
+    /// 已经为「竖向视口为 0」打过日志。只打一次，避免每轮布局刷屏。
+    /// </summary>
+    private bool _verticalViewportWarned;
+
+    private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
 
     /// <summary>
     /// 清空内容。切歌或停止播放时调用。
