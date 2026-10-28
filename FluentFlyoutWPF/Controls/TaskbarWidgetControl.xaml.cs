@@ -912,11 +912,11 @@ public partial class TaskbarWidgetControl : UserControl
         // 歌词模式下容器宽度同时决定歌词视口宽度，必须一起更新，
         // 否则长句滚动会按旧的视口宽度算，滚出边界。
         //
-        // 竖向时不设：竖向下 LyricsPanel 的宽度由「任务栏宽度」决定，
-        // 与这里的 logicalWidth（主轴长度）不是同一个量。竖向下
-        // logicalWidth 对应屏幕纵向延伸，写进 LyricsPanel.Width 会让面板
-        // 变成一条极长的横条，换行完全失效。竖向的折行宽度由
-        // LyricsPanel.UpdateVerticalWrapLayout 从面板自身的实际宽度取。
+        // 竖向不走这里：竖向下 LyricsPanel 的宽度是「任务栏短边」，与这里的
+        // logicalWidth（主轴长度）不是同一个量，写进去会让面板变成一条极长的
+        // 横条、换行彻底失效。竖向的折行宽度由本方法末尾单独写入
+        // （ApplyVerticalLyricsPanelWidth），**不能**寄希望于面板从自身
+        // ActualWidth 取——那个值在这里恒为 0，见下方注释。
         if (_isLyricsMode && !_isVertical && widthChanged)
         {
             LyricsPanel.Width = newTitleContainerWidth;
@@ -943,8 +943,8 @@ public partial class TaskbarWidgetControl : UserControl
         // 这里仍然返回 40 / 28（任务栏短边的标准值）：TaskbarWindow 的
         // crossPos 计算是 `(crossSize - physicalHeight) / 2`，若两边取同一来源
         // （都来自 SettingsManager 的短边判定），居中的结果才稳定。
-        // 真正的折行宽度由 LyricsPanel.UpdateVerticalWrapLayout 从
-        // 面板自身的实际宽度取，不依赖这个返回值。
+        // 这个返回值同时就是折行宽度——下面立刻写给面板，面板不该、也无法
+        // 自己从 ActualWidth 推出来。
         double logicalHeight = _isSmallTaskbar ? SmallTaskbarWidgetHeight : DefaultTaskbarWidgetHeight;
 
         // 竖向歌词必须在这里显式写入折行宽度，否则面板宽度是 0，文字被整块剪掉。
