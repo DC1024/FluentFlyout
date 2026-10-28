@@ -21,11 +21,11 @@ FluentFlyout.Lyrics/                                    Core —— 检索 / 解
 依赖只朝下，不朝上：
 
 - `FluentFlyout.Lyrics` **没有任何一处 `using System.Windows`**，也不引用 WPF 工程。
-  所以检索、解析、时间轴、布局计算全部能在没有 UI 线程、没有真实任务栏的进程里单测
+  所以检索、解析、时间轴、布局计算都不需要 UI 线程，可以直接断言
   （`FluentFlyout.Lyrics.Tests`，40+ 个测试文件）。
-- 需要 Windows 的地方（SMTC 的 `MediaManager`、UIAutomation 读任务栏）全部落在
-  `FluentFlyoutWPF/Lyrics/FluentFlyoutMusicSessionProvider.cs` 与
-  `FluentFlyoutWPF/Controls/TaskbarWidgetControl.xaml.cs` 里，Core 只认接口
+- 需要 Windows 的地方全部落在 WPF 工程里：SMTC 采样在
+  `FluentFlyoutWPF/Lyrics/FluentFlyoutMusicSessionProvider.cs`，任务栏部件矩形的
+  UIAutomation 测量在 `FluentFlyoutWPF/Windows/TaskbarWindow.xaml.cs`。Core 只认接口
   （`Abstractions.IMusicSessionProvider`）。
 
 这条隔离是这次移植的地基：Core 若沾了 WPF，`TaskbarFreeSpaceLayout` /
@@ -171,8 +171,8 @@ flowchart TD
 它的位置由 `TaskbarWindow` 的 `crossPos` 居中处理，不在这个预算里——扣掉会让可用主轴
 长度凭空少一个按钮组。
 
-主轴切换（横 ↔ 竖）与 DPI 变化都走同一条重排路径；混合 DPI 由
-`TaskbarWindow.xaml.cs` / `MainWindow.xaml.cs` 里的 `WM_DPICHANGED` 处理。
+任务栏方位变了由 `TaskbarWindow` 调 `Widget.SetVerticalMode(isVertical)` 触发重排；
+混合 DPI 由 `TaskbarWindow.xaml.cs` / `MainWindow.xaml.cs` 里的 `WM_DPICHANGED` 处理。
 
 ---
 
@@ -210,7 +210,7 @@ UI 入口有两处，都指向同一个值：设置页的歌词页，以及托�
 | 播放位置策略 | `FluentFlyout.Lyrics/Timeline/*` | `TimelinePositionStrategyTests`、`LocalClockTimelineStrategyTests` |
 | 检索与各源 | `FluentFlyout.Lyrics/Services.*`（平铺命名，非子目录） | `LyricResolutionCoordinatorTests`、`QqMusic*Tests`、`LyricifySourceAdaptersTests` |
 | 缓存 | `LyricPipelineCache`、`ResolvedLyricCache`、`LyricCacheStore` | `LyricPipelineCacheTests`、`ResolvedLyricCacheTests`、`LyricCacheStoreTests` |
-| 对齐与滚动 | `Layout/ScrollGeometry.cs`、`ScanGeometry.cs` | `ScrollGeometryTests`、`ScanGeometryTests` |
+| 对齐与滚动 | `Layout/ScrollGeometry.cs`、`Layout/ScanGeometry.cs` | `ScrollGeometryTests`、`ScanGeometryTests` |
 | 宽度与避让 | `Layout/LyricsDocumentWidth.cs`、`TaskbarFreeSpaceLayout.cs`、`TaskbarWidthBudget.cs` | `LyricsDocumentWidthTests`、`TaskbarFreeSpaceLayoutTests`、`TaskbarWidthBudgetTests` |
 | 竖向布局 | `Layout/LyricsVerticalLayout.cs` | `LyricsVerticalLayoutTests` |
 | 渲染控件 | `FluentFlyoutWPF/Controls/TaskbarWidgetControl.xaml(.cs)`、`LyricsPanel.xaml.cs` | 由上述布局单测覆盖 |
