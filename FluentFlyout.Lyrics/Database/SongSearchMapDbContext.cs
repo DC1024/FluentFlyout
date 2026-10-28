@@ -5,6 +5,7 @@
 // 的 TaskbarLyrics.Core，原始许可为 MIT（见仓库根目录 LICENSE-TaskbarLyrics）。
 // 本仓库整体按 GPL-3.0-or-later 分发。
 
+using FluentFlyout.Lyrics.Utilities;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.IO;
@@ -13,23 +14,38 @@ namespace FluentFlyout.Lyrics.Database;
 
 public class SongSearchMapDbContext : DbContext
 {
+    private readonly string? _databasePath;
+
+    public SongSearchMapDbContext()
+    {
+    }
+
+    internal SongSearchMapDbContext(string databasePath)
+    {
+        _databasePath = Path.GetFullPath(databasePath);
+    }
+
     public DbSet<SongSearchMap> SongSearchMaps => Set<SongSearchMap>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        var dbDirectory = Path.Combine(appData, "TaskbarLyrics", "database");
-
-        try
+        var dbPath = _databasePath;
+        if (dbPath is null)
         {
-            Directory.CreateDirectory(dbDirectory);
-        }
-        catch
-        {
-            // Ignore folder creation errors, EF will throw during use if directory is inaccessible.
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var dbDirectory = Path.Combine(appData, "TaskbarLyrics", "database");
+            dbPath = Path.Combine(dbDirectory, "song_maps.db");
+
+            try
+            {
+                Directory.CreateDirectory(dbDirectory);
+            }
+            catch
+            {
+                // Ignore folder creation errors, EF will throw during use if directory is inaccessible.
+            }
         }
 
-        var dbPath = Path.Combine(dbDirectory, "song_maps.db");
         optionsBuilder.UseSqlite($"Data Source={dbPath}");
     }
 
@@ -43,16 +59,28 @@ public class SongSearchMapDbContext : DbContext
             .IsUnique();
     }
 
-    public static void InitializeDatabase()
+    /// <summary>
+    /// 建表（幂等）。表已存在时只做一次 <c>sqlite_master</c> 探测。
+    /// 失败**不抛**，由调用方决定是否降级：映射库是纯可选增强，
+    /// 它不可用时歌词主链路必须照常工作。
+    /// </summary>
+    internal bool EnsureSchema()
     {
         try
         {
-            using var context = new SongSearchMapDbContext();
-            context.Database.EnsureCreated();
+            Database.EnsureCreated();
+            return true;
         }
-        catch
+        catch (Exception exception)
         {
-            // Ignore database initialization failures to prevent app crashing on startup.
+            Log.Error($"初始化 SQLite 映射库失败: {exception.Message}");
+            return false;
         }
+    }
+
+    public static bool InitializeDatabase()
+    {
+        using var context = new SongSearchMapDbContext();
+        return context.EnsureSchema();
     }
 }
