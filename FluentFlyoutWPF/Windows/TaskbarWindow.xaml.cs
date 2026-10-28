@@ -1247,9 +1247,9 @@ on_error:
     /// 而 480 正好挡住任务栏中部的应用按钮。
     ///
     /// 竖向：**按任务栏实际主轴长度现算**（<see cref="LyricsVerticalLayout.ResolveMaxMainAxisLength"/>）。
-    /// 竖排没有滚动，估算值超过上限的行会被整行裁掉——4K 竖屏主轴两千多 DIP，
-    /// 继续用 480 会把一句长歌词切在半途（截图矩阵 edge-vertical-v28-font20-long-line
-    /// 就是这个现象）。
+    /// 这个值决定一句能同时看到几个字：超出的部分照样排出来、靠面板沿主轴
+    /// 平移带进视口（见 <c>LyricsPanel.VerticalScroll.cs</c>），但视口本身
+    /// 还是越宽越好读——4K 竖屏主轴两千多 DIP，继续用 480 会让长句多滚一大截。
     /// </summary>
     /// <param name="taskbarLength">任务栏主轴长度（物理像素）。</param>
     private static double ResolveMaxLengthDip(double taskbarLength, double dpiScale, bool isVertical)

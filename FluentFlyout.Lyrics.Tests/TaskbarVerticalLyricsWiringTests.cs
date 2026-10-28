@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
+using FluentFlyout.Classes.Settings;
 using FluentFlyout.Controls;
 using FluentFlyout.Lyrics.Models;
 using Xunit;
@@ -43,6 +44,20 @@ public sealed class TaskbarVerticalLyricsWiringTests
     /// <c>TaskbarWidgetControl.WidgetCrossInset</c> 同源。
     /// </summary>
     private const double CrossInset = 2.5;
+
+    /// <summary>
+    /// 一句真正**排不进**主轴长度的歌词（51 个汉字，字号 13 时约 663 DIP）。
+    ///
+    /// <para>
+    /// 为什么必须有它：文件里原先那条 <c>LongLine</c>（28 字 / 377 DIP）
+    /// 从来没超过 <c>DefaultMaxMainAxisLength</c> = 480，于是
+    /// 「长句被裁 / 长句滚动」这条路径在整套单测与截图矩阵里一次都没被
+    /// 真正渲染过——断言只看墨迹宽度，照样全绿。夹具覆盖不到的分支
+    /// 等于没有实现。
+    /// </para>
+    /// </summary>
+    private const string OversizeLine =
+        "如果这场雨一直下到明天清晨我们是不是就能一直站在这里不分开而我还在等你说好的那句话就算全世界都安静下来";
 
     [Fact]
     public void VerticalLyricsModeWritesAvailableCrossSizeIntoPanelHeight()
@@ -341,6 +356,175 @@ public sealed class TaskbarVerticalLyricsWiringTests
         Assert.True(widths[0] > DefaultCrossSize, "主轴长度应当由内容决定，远大于短边。");
     }
 
+    [Fact]
+    public void OversizeLineScrollsAlongTheMainAxisWhenScrollingIsEnabled()
+    {
+        // 51 个字排出来约 663 DIP，而主轴预算只给 480 —— 超出 193 DIP。
+        // 不滚动的话，被裁掉的正是「还没唱的后半句」，用户看到的是半句歌词。
+        //
+        // 断言分三层，缺一层都会让「实现没接上」漏过去：
+        //   1. 视口确实比内容短（否则下面的位移断言恒等于 0，等于没测）；
+        //   2. 位移是负的（确实往前滚了）；
+        //   3. 位移等于 ScrollGeometry 的公式值（滚到位了，不是滚了一半）。
+        var (viewport, content, offset) = RunOnStaThread(() =>
+        {
+            var (control, panel) = CreateVerticalLyricsControl();
+
+            return WithScrollingEnabled(true, () =>
+            {
+                // availableWidth 传 480 而不是默认的 800：主轴长度会被宿主压到
+                // 预算以内（TaskbarWidgetControl.CalculateSize 的 Math.Min），
+                // 这才是真机上「句子排不下」的成因——不是面板算错了长度，
+                // 而是任务栏只肯给这么多。
+                var blocks = LayOutLine(control, panel, OversizeLine, availableWidth: 480);
+
+                // 内容长度从字形块量，不用 VerticalContentLength：
+                // 后者是「整首最长一列」，在这条用例里恰好等于当前句，
+                // 但两个量的语义必须分清（见下一条用例）。
+                var last = blocks[^1];
+                var content = Canvas.GetLeft(last) + last.Width;
+
+                return (panel.Width, content, panel.VerticalScrollOffset);
+            });
+        });
+
+        Assert.True(content > 480,
+            $"51 个汉字应当排出 600 DIP 以上，实测 {content:F1} DIP——测试数据或字号假设错了。");
+        Assert.True(viewport < content - 1,
+            $"主轴预算 480、内容 {content:F1} DIP，视口却是 {viewport:F1} DIP——" +
+            "宿主没有把主轴长度压到预算以内，这条用例测不到滚动。");
+
+        Assert.True(offset < -1,
+            $"进度 0.3 时位移是 {offset:F1} DIP，没有滚动：长句尾部会被 ClipToBounds 吃掉。");
+
+        // 未知时长分支按进度线性推进：offset = −(内容 − 视口 + 10) × 进度。
+        // 末尾那 10 DIP 是 ScrollGeometry 的固定余量，两条方向共用同一口径。
+        var expected = -((content - viewport) + 10) * 0.3;
+        Assert.Equal(expected, offset, precision: 1);
+    }
+
+    [Fact]
+    public void ShortLineInASongWithLongLinesDoesNotScroll()
+    {
+        // 滚动长度必须取「当前这一句」，不是 VerticalContentLength。
+        //
+        // 后者是「整首歌最长的一列」，给宿主定小组件尺寸用（歌内恒定，
+        // 否则胶囊随每句伸缩）。如果滚动也读它，那么同专辑里只要有一句
+        // 长歌词，这一句 9 个字的短句也会跟着滑——明明一屏放得下。
+        const string ShortLine = "被爱的深夜我在想念";
+
+        var (viewport, documentLength, lineLength, offset) = RunOnStaThread(() =>
+        {
+            var (control, panel) = CreateVerticalLyricsControl();
+
+            return WithScrollingEnabled(true, () =>
+            {
+                // 文档里放一句长的：小组件的主轴长度因此按 663 DIP 要，
+                // 被预算压到 480。当前句仍是最短那句。
+                var blocks = LayOutLine(
+                    control,
+                    panel,
+                    ShortLine,
+                    document: new[]
+                    {
+                        new LyricLine(TimeSpan.Zero, ShortLine),
+                        new LyricLine(TimeSpan.FromSeconds(4), OversizeLine),
+                    },
+                    availableWidth: 480);
+
+                // 当前句的实际长度只能从字形块量：VerticalContentLength 在有文档时
+                // 返回的是**整首最长一列**（那正是本用例要区分的另一个量）。
+                var last = blocks[^1];
+                var lineLength = Canvas.GetLeft(last) + last.Width;
+
+                return (panel.Width, panel.VerticalContentLength, lineLength, panel.VerticalScrollOffset);
+            });
+        });
+
+        // 前提：这首歌确实比视口长，宿主也确实把主轴压到预算以内。
+        // 少了这一条，offset == 0 可能只是因为「什么都没排下」。
+        Assert.True(documentLength > viewport,
+            $"整首歌最长一列 {documentLength:F1} DIP、视口 {viewport:F1} DIP——" +
+            "没有超出的歌，这条用例测不出「按整首滚动」这个错误实现。");
+
+        Assert.True(lineLength < viewport - 1,
+            $"当前句 {lineLength:F1} DIP、视口 {viewport:F1} DIP——9 个字本来就放得下。");
+
+        Assert.Equal(0, offset, precision: 3);
+    }
+
+    [Fact]
+    public void ScrollingDisabledLeavesTheColumnAnchored()
+    {
+        // 设置项默认关闭（UserSettings.TaskbarWidgetScrollingEnabled = false）。
+        // 关掉时位移必须恒为 0：用户关这个开关就是不想看到东西在动，
+        // 「关掉了但只滚一点点」比不提供开关更让人困惑。
+        var offset = RunOnStaThread(() =>
+        {
+            var (control, panel) = CreateVerticalLyricsControl();
+
+            return WithScrollingEnabled(false, () =>
+            {
+                LayOutLine(control, panel, OversizeLine, availableWidth: 480);
+                return panel.VerticalScrollOffset;
+            });
+        });
+
+        Assert.Equal(0, offset, precision: 3);
+    }
+
+    /// <summary>
+    /// 临时改写「长句滚动」设置项，执行完恢复原值。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SettingsManager.Current"/> 是应用级单例，测试之间共享。
+    /// 直接赋值不还原会污染后续用例（尤其截图矩阵里对位移敏感的那几张）。
+    ///
+    /// <para>
+    /// 改这个属性是安全的：<c>UserSettings._initializing</c> 默认为 true，
+    /// 而 <c>CompleteInitialization</c> 只在应用启动时由 MainWindow 调用，
+    /// 所以变更回调（<c>OnTaskbarWidgetScrollingEnabledChanged</c>）会早退，
+    /// 不会去碰 <c>Application.Current.MainWindow</c>。
+    /// </para>
+    /// </remarks>
+    private static void WithScrollingEnabled(bool enabled, Action action)
+    {
+        var previous = SettingsManager.Current.TaskbarWidgetScrollingEnabled;
+        SettingsManager.Current.TaskbarWidgetScrollingEnabled = enabled;
+
+        try
+        {
+            action();
+        }
+        finally
+        {
+            SettingsManager.Current.TaskbarWidgetScrollingEnabled = previous;
+        }
+    }
+
+    /// <summary>
+    /// 同 <see cref="WithScrollingEnabled(bool, Action)"/>，带返回值。
+    ///
+    /// <para>
+    /// 为什么必须整个布局过程都包在里面：滚动开关是在 <c>ApplyFrame</c> 里
+    /// 被读的，只包住断言那几行等于开关从来没生效过。
+    /// </para>
+    /// </summary>
+    private static T WithScrollingEnabled<T>(bool enabled, Func<T> action)
+    {
+        var previous = SettingsManager.Current.TaskbarWidgetScrollingEnabled;
+        SettingsManager.Current.TaskbarWidgetScrollingEnabled = enabled;
+
+        try
+        {
+            return action();
+        }
+        finally
+        {
+            SettingsManager.Current.TaskbarWidgetScrollingEnabled = previous;
+        }
+    }
+
     /// <summary>
     /// 把一句歌词送进控件并返回竖排建出来的字形块（按主轴顺序）。
     /// </summary>
@@ -349,11 +533,27 @@ public sealed class TaskbarVerticalLyricsWiringTests
     /// <c>CalculateSize</c>（宿主在这里写短边并读长度）→ 再排一遍。
     /// 少了第一次布局，量到的字号来自应用默认字体。
     /// </remarks>
+    /// <param name="translation">译文列的内容，null 表示这一句没有译文。</param>
+    /// <param name="document">
+    /// 整首歌词。null 表示「这首歌只有这一句」。
+    ///
+    /// <para>
+    /// 要区分「当前句长度」与「整首最长句长度」的用例必须显式给：
+    /// 宿主的主轴长度按后者定，滚动长度按前者算，两者混了就会
+    /// 「短句在长歌里也跟着滑」。
+    /// </para>
+    /// </param>
+    /// <param name="availableWidth">
+    /// 任务栏能给的主轴预算（DIP）。默认 800 对一句话总是够用；
+    /// 要逼出「内容排不下」必须压到 480 上下——真机上长句被裁就是这个成因。
+    /// </param>
     private static List<TextBlock> LayOutLine(
         TaskbarWidgetControl control,
         FrameworkElement panel,
         string line,
-        string? translation = null)
+        string? translation = null,
+        IReadOnlyList<LyricLine>? document = null,
+        double availableWidth = 800)
     {
         var host = new Canvas { Width = 48, Height = 1440 };
         host.Children.Add(control);
@@ -364,7 +564,7 @@ public sealed class TaskbarVerticalLyricsWiringTests
         control.Arrange(new Rect(0, 0, 240, DefaultCrossSize));
         control.UpdateLayout();
 
-        control.ApplyLyricDocument(new[] { new LyricLine(TimeSpan.Zero, line) });
+        control.ApplyLyricDocument(document ?? new[] { new LyricLine(TimeSpan.Zero, line) });
         control.UpdateLyricsFrame(new LyricDisplayFrame(
             line,
             string.Empty,
@@ -372,7 +572,7 @@ public sealed class TaskbarVerticalLyricsWiringTests
             0.3,
             CurrentTranslation: translation));
 
-        var (logicalWidth, logicalHeight) = control.CalculateSize(dpiScale: 1.0, availableWidth: 800);
+        var (logicalWidth, logicalHeight) = control.CalculateSize(dpiScale: 1.0, availableWidth: availableWidth);
         control.Width = logicalWidth;
         control.Height = logicalHeight;
         control.Measure(new Size(logicalWidth, logicalHeight));

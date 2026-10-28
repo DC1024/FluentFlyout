@@ -24,6 +24,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using FluentFlyout.Classes.Settings;
 using FluentFlyout.Controls;
 using FluentFlyout.Lyrics.Layout;
 using FluentFlyout.Lyrics.Models;
@@ -69,6 +70,20 @@ internal static class Program
 
     /// <summary>一组边界参数：短边长度 + 用户字号（都是 DIP）。</summary>
     private sealed record Variant(string Name, double CrossSize, double FontSize);
+
+    /// <summary>
+    /// 一句真正排不进主轴上限的歌词（51 个汉字，字号 13 时约 663 DIP）。
+    ///
+    /// <para>
+    /// 为什么需要它：原先的 <c>long-line</c>（30 字 / 377 DIP）从没超过
+    /// <see cref="TaskbarWidgetControl.MaxLyricsWidgetLength"/>（480），
+    /// <c>EdgeStates</c> 又只取 <c>LyricStates[0]/[1]/[4]</c>——于是
+    /// 「长句被裁 / 长句滚动」这条路径在整张矩阵里一次都没被渲染过。
+    /// 图上永远是开头几个字，而断言只量墨迹宽度，照样全绿。
+    /// </para>
+    /// </summary>
+    private const string OversizeLine =
+        "如果这场雨一直下到明天清晨我们是不是就能一直站在这里不分开而我还在等你说好的那句话就算全世界都安静下来";
 
     [STAThread]
     private static int Main(string[] args)
@@ -271,13 +286,11 @@ internal static class Program
         // 红的是判据不是渲染。改用布局数值（面板要的长度 vs 分到的长度）——
         // 这也是生产里真正比较的那两个量。
         //
-        // 长句豁免：竖排没有滚动，一列到底的句子一旦超过上限就只能被裁。
-        // 这是这一版明确的取舍（逐字滚动排在后一轮），不是缺陷。所以长句
-        // 不参与断言，只把「裁掉多少」打出来做量化记录——将来接上滚动时，
-        // 这行数字就是验收基线。
-        // 长句豁免只对**竖向**成立：横向有滚动，长句再多也会一行行推过去，
-        // 被裁就是真缺陷。竖向没有滚动，超限只能裁——那是取舍。
-        foreach (var r in edgeResults.Where(x => !(x.IsLongLine && x.IsVertical)))
+        // 这里**不再有长句豁免**。原先的那条豁免是死代码：边界矩阵只取
+        // single / two-line / mixed-latin 三个状态，长句根本没进来过。
+        // 真正的溢出用例是基础矩阵里的 oversize-start / oversize-end，
+        // 而它们靠滚动补出后半句，判据在第 7 节。
+        foreach (var r in edgeResults)
         {
             Check(
                 $"{r.Name}：内容没被长度上限裁掉",
@@ -285,14 +298,6 @@ internal static class Program
                 $"短边={r.CrossSize:F0}，字号={r.FontSize:F1}，" +
                 $"画布={r.Bitmap.PixelWidth}×{r.Bitmap.PixelHeight}，" +
                 $"墨迹高={r.InkBounds.Height:F0}px");
-        }
-
-        foreach (var r in edgeResults.Where(x => x.IsLongLine && x.IsVertical))
-        {
-            Console.WriteLine(
-                $"  [INFO] {r.Name}：长句超限属已知取舍 " +
-                $"（短边={r.CrossSize:F0}，字号={r.FontSize:F1}，" +
-                $"被裁={r.ContentClipped}，墨迹高={r.InkBounds.Height:F0}px）");
         }
 
         // 6. 边界矩阵第二条：竖排是**逐字排**，每列一个字宽。
@@ -327,6 +332,65 @@ internal static class Program
                 $"（{ratio:P0}），短边={r.ViewportWidth:F0}px");
         }
 
+        // 7. 竖排长句滚动：位移必须**同时**作用到几何与渲染上。
+        //
+        // 这一节的由来：竖排一列到底，51 个字排 663 DIP，而主轴上限是 480，
+        // 超出 143 DIP 被 ClipToBounds 吃掉——丢掉的正是还没唱的后半句。
+        // 修法是把整块画布沿主轴平移，但平移有个渲染坑：RenderTransform
+        // 会连元素自己的裁剪框一起搬走，平移到哪儿、窗口就跟到哪儿，
+        // 尾巴永远出不来。位移值算得再对，画面上也毫无变化。
+        //
+        // 所以判据拆成三问：滚不滚、滚得对不对、画面上滚没滚。
+        foreach (var r in results.Where(x => x.IsVertical && x.Scrolls))
+        {
+            // 7.1 开着开关且确实溢出 → 位移必须非零。
+            Check(
+                $"{r.Name}：长句滚动真的产生了位移",
+                Math.Abs(r.ScrollOffset) > 0.5,
+                $"位移={r.ScrollOffset:F1} DIP，期望={r.ExpectedScroll:F1} DIP" +
+                "（为 0 说明竖向分支没接上，或视口被算成了 0）");
+
+            // 7.2 位移数值符合公式。放宽到 1 DIP：进度与内容长度都经过
+            //     两三层换算，逐位相等只会测到浮点写法的细节。
+            Check(
+                $"{r.Name}：位移符合滚动公式",
+                Math.Abs(r.ScrollOffset - r.ExpectedScroll) <= 1.0,
+                $"位移={r.ScrollOffset:F1}，期望={r.ExpectedScroll:F1}" +
+                "（大了=按整首最长句滚，小了=没算上尾部余量）");
+
+            // 7.3 画面上必须真的动了。
+            //
+            // 判据取「内容顶住视口起始边」而不是「与上一张图不同」：
+            // 探针按状态各存一张 PNG，拿不到「上一张」；而位移为负意味着
+            // 整块内容被往前推，起始边必然被内容填满。位移为 0 时开头也
+            // 贴边，这一条单独没有判别力——配合 7.1 才有。
+            Check(
+                $"{r.Name}：内容顶住视口起始边（位移作用到了渲染上）",
+                r.InkBounds.Top <= 1.5 * r.DpiScale,
+                $"墨迹上沿={r.InkBounds.Top:F1}px，容差={1.5 * r.DpiScale:F1}px");
+        }
+
+        // 7.4 滚到底：尾部必须留出 10 DIP 余量，最后一个字不能贴边。
+        //
+        // 只判滚到底的那一组（位移绝对值够大），开头那一组还在 10 DIP 以内，
+        // 尾部余量本来就还没兑现。
+        foreach (var r in results.Where(x => x.IsVertical && x.Scrolls && x.ExpectedScroll < -50))
+        {
+            var tailGap = r.Bitmap.PixelHeight - r.InkBounds.Bottom;
+
+            // 容差 1.5 DIP：汉字墨迹会略微越过自己的步进框（不是严格 1em），
+            // 再叠上 ClearType 的整像素量化，实测 100%/150%/200% 下分别是
+            // 10/14/19 px，而名义值是 10/15/20 px。第一版按名义值判，
+            // 6 张图全红——错的是判据的紧度，不是渲染。
+            var tolerance = 1.5 * r.DpiScale;
+
+            Check(
+                $"{r.Name}：滚到底后尾部留 10 DIP 余量",
+                tailGap >= (10 * r.DpiScale) - tolerance &&
+                tailGap <= (10 * r.DpiScale) + tolerance,
+                $"尾部留白={tailGap:F1}px，名义={10 * r.DpiScale:F1}px");
+        }
+
         Console.WriteLine();
         Console.WriteLine($"PNG: {outputDirectory}");
         Console.WriteLine(_failures == 0 ? "全部通过" : $"{_failures} 项失败");
@@ -335,13 +399,23 @@ internal static class Program
     }
 
     /// <summary>一个歌词状态的描述。</summary>
+    /// <param name="Scrolls">
+    /// 这一句是否**真的**排不进主轴上限，需要靠滚动补出后半句。
+    ///
+    /// <para>
+    /// 它同时是「长句滚动」设置项的开关值：矩阵里必须有一组开着、
+    /// 一组关着，否则「关掉开关后位移恒为 0」这条永远不会被验证。
+    /// 只标在真正溢出的状态上——给 30 字的 <c>long-line</c> 标 true
+    /// 会让「位移非零」的断言对一句根本装得下的歌词提要求。
+    /// </para>
+    /// </param>
     private sealed record LyricState(
         string Name,
         LyricDisplayFrame Frame,
         bool IsTwoLine,
         bool IsPureMusic = false,
         bool IsWrapped = true,
-        bool IsLongLine = false);
+        bool Scrolls = false);
 
     /// <summary>
     /// 覆盖 P3 全部渲染路径的歌词状态。
@@ -402,16 +476,44 @@ internal static class Program
                 Title: "Mixed"),
             IsTwoLine: false),
 
-        // 长句（横向会触发滚动；竖向一列到底，超过长度上限就被裁掉——
-        // 竖排不做逐字滚动是这一版的已知取舍，见 IsLongLine 的注释）
+        // 长句（横向会触发滚动；竖向一列到底，377 DIP 还没到 480 的上限，
+        // 所以它只是「较长」，不触发滚动——真正的溢出用例在下面两张）
         new("long-line",
             new LyricDisplayFrame(
                 CurrentLine: "如果这场雨一直下到明天清晨我们是不是就能一直站在这里不分开",
                 NextLine: "而你说好要陪我走完这条街",
                 Title: "测试曲目",
                 LineProgress: 0.3),
-            IsTwoLine: true,
-            IsLongLine: true),
+            IsTwoLine: true),
+
+        // 竖向超长句 · 开头（进度 2%）。
+        //
+        // 这两张是「长句滚动」的正样本，成对出现：
+        // 正文完全相同、只有进度不同。判读方式是**横向对比两张图是否不同**
+        // ——一模一样就说明位移没有作用到渲染上（曾经就是这样：
+        // ClipToBounds 挂在被平移的画布上，裁剪窗口跟着一起搬走了）。
+        new("oversize-start",
+            new LyricDisplayFrame(
+                CurrentLine: OversizeLine,
+                NextLine: "",
+                Title: "测试曲目",
+                LineProgress: 0.02),
+            IsTwoLine: false,
+            Scrolls: true),
+
+        // 竖向超长句 · 滚到底（进度 100%）。
+        //
+        // 进度必须是 1.0 而不是 0.98：滚动几何的 10 DIP 尾部余量是在
+        // 进度 1.0 时兑现的，0.98 只会留 6 DIP，尾部留白判据会差 4 DIP。
+        // 第一版就取 0.98，6 张图全红——错的是测试输入，不是实现。
+        new("oversize-end",
+            new LyricDisplayFrame(
+                CurrentLine: OversizeLine,
+                NextLine: "",
+                Title: "测试曲目",
+                LineProgress: 1.0),
+            IsTwoLine: false,
+            Scrolls: true),
 
         // 纯音乐态
         new("pure-music",
@@ -451,6 +553,15 @@ internal static class Program
             preferredFontSize: variant?.FontSize ?? LyricsMetricsPolicy.DefaultPreferredFontSize);
 
         var panel = new LyricsPanel();
+
+        // 长句滚动开关。生产默认关闭（UserSettings.TaskbarWidgetScrollingEnabled
+        // = false），所以矩阵里必须有一组开着：**只测默认值等于没测**，
+        // 「关掉时位移恒为 0」与「打开时位移正确」是两条独立的不变量。
+        //
+        // 改这个单例属性是安全的：UserSettings._initializing 默认为 true，
+        // 而 CompleteInitialization 只在应用启动时由 MainWindow 调用，
+        // 所以变更回调会早退，不会去碰 Application.Current.MainWindow。
+        SettingsManager.Current.TaskbarWidgetScrollingEnabled = state.Scrolls;
 
         // 顺序与生产一致：先设度量（ApplyMetrics 会清宽度缓存），
         // 再应用配色，最后喂帧。
@@ -593,6 +704,45 @@ internal static class Program
             }
         }
 
+        // 布局跑完再补喂一帧，与生产 30fps 同构。
+        //
+        // 这一步此前是缺的，后果比看上去严重：第一帧到达时面板还没布局
+        // （横向的 PrimaryContainer.ActualWidth 是 0、竖向的 Width 还是 NaN），
+        // UpdateScroll 会因「视口还没量出来」早退。于是「长句滚动」这条路径
+        // 在整张矩阵里从来没有被真正渲染过——图上永远是开头几个字，
+        // 而断言只量墨迹宽度，照样全绿。
+        //
+        // 只对需要滚动的状态补喂，不是图省事：ApplyFrame 在纯音乐态上
+        // **不幂等**——它先把 CurrentLine 写进 PrimaryText（第 398 行），
+        // 再由 UpdatePureMusicState 在「首次进入纯音乐」时清空；第二次调用
+        // 时状态已是纯音乐、清空分支早退，文字于是被写回来。生产里这个
+        // 问题被 UpdateTextRegionVisibility 藏面板遮住了，探针没有那层，
+        // 补喂就会让 12 张 pure-music 图从「无墨迹」变成「有墨迹」。
+        // 那是另一个缺陷（见 p3-landing-points.md 的已知问题），
+        // 不该在「竖排滚动」这一批里顺手改掉。
+        if (state.Scrolls)
+        {
+            panel.ApplyFrame(state.Frame);
+
+            renderRoot.Measure(new Size(logicalWidth, logicalHeight));
+            renderRoot.Arrange(new Rect(0, 0, logicalWidth, logicalHeight));
+            renderRoot.UpdateLayout();
+        }
+
+        // 位移（DIP，负值表示已往前滚）与「按公式应该滚多少」。
+        //
+        // 只对竖向算期望值：横向的滚动路径（PrimaryContainer +
+        // _cachedPrimaryTextWidth）是既有实现，已有专门的单测覆盖；
+        // 在这里再算一套期望值只会多一处需要同步维护的口径。
+        var scrollOffset = panel.VerticalScrollOffset;
+        var expectedScroll = isVertical
+            ? ExpectedScroll(
+                viewport: panel.Width,
+                content: panel.VerticalContentLength,
+                progress: state.Frame.LineProgress,
+                enabled: state.Scrolls)
+            : 0;
+
         // 诊断：把竖向各层的实际布局尺寸打出来。
         //
         // 竖向这条链有两层变换（Canvas → Widget(+90)），光看代码很难判断
@@ -619,6 +769,7 @@ internal static class Program
                     $"needs={panel.VerticalContentLength,6:F1} " +
                     $"canvas={vertical?.ActualWidth,6:F1}x{vertical?.ActualHeight,5:F1} " +
                     $"columns={columns} " +
+                    $"scroll={scrollOffset,7:F1} " +
                     $"clip={contentClipped}");
             }
         }
@@ -643,7 +794,37 @@ internal static class Program
             crossSize: crossSize,
             fontSize: metrics.FontSize,
             contentClipped: contentClipped,
+            scrollOffset: scrollOffset,
+            expectedScroll: expectedScroll,
             backgroundColor: background);
+    }
+
+    /// <summary>
+    /// 按滚动公式独立算一遍期望位移（DIP，负值表示已往前滚）。
+    /// </summary>
+    /// <remarks>
+    /// 刻意**不调用** <see cref="ScrollGeometry"/>：拿被测实现去算期望值，
+    /// 实现错了断言会跟着一起错——那是同义反复，不是验证。这里照定义
+    /// 重写一遍：文字超出视口多少就滚多少，末尾再留 10 DIP 余量，
+    /// 未滚完的部分按行内进度线性推进。
+    /// </remarks>
+    /// <param name="enabled">这一组是否打开「长句滚动」开关。</param>
+    private static double ExpectedScroll(double viewport, double content, double progress, bool enabled)
+    {
+        if (!enabled ||
+            !double.IsFinite(viewport) || viewport <= 0 ||
+            !double.IsFinite(content) || content <= viewport)
+        {
+            return 0;
+        }
+
+        // 与 ScrollGeometry.TrailingGap 同源：让最后一个字不贴着视口边缘。
+        const double trailingGap = 10;
+
+        var distance = (content - viewport) + trailingGap;
+        var clamped = double.IsFinite(progress) ? Math.Clamp(progress, 0, 1) : 0;
+
+        return -distance * clamped;
     }
 
     private static ShotResult Measure(
@@ -657,6 +838,8 @@ internal static class Program
         double crossSize,
         double fontSize,
         bool contentClipped,
+        double scrollOffset,
+        double expectedScroll,
         Color backgroundColor)
     {
         var stride = bitmap.PixelWidth * 4;
@@ -722,7 +905,7 @@ internal static class Program
             IsTwoLine = state.IsTwoLine,
             IsWrapped = state.IsWrapped,
             IsPureMusic = state.IsPureMusic,
-            IsLongLine = state.IsLongLine,
+            Scrolls = state.Scrolls,
             IsDark = isDark,
             LineHeight = lineHeightPx,
             DpiScale = dpiScale,
@@ -730,6 +913,8 @@ internal static class Program
             CrossSize = crossSize,
             FontSize = fontSize,
             ContentClipped = contentClipped,
+            ScrollOffset = scrollOffset,
+            ExpectedScroll = expectedScroll,
         };
     }
 
@@ -790,12 +975,12 @@ internal static class Program
         public required bool IsPureMusic { get; init; }
 
         /// <summary>
-        /// 是否是「一列到底装不下」的长句。
+        /// 这一句是否排不进主轴上限、要靠滚动补出后半句。
         ///
-        /// 竖排不做逐字滚动，长句超出主轴上限就只能被裁。这是本版已知取舍，
-        /// 所以这类用例不参与「不许裁」的断言，改为一律打印裁切量。
+        /// 它同时是「长句滚动」设置项的开关值：矩阵里必须有一组开着，
+        /// 否则「打开滚动时位移正确」永远不会被验证。
         /// </summary>
-        public required bool IsLongLine { get; init; }
+        public required bool Scrolls { get; init; }
 
         public required bool IsDark { get; init; }
         public required double LineHeight { get; init; }
@@ -823,5 +1008,22 @@ internal static class Program
         /// 「刚好填满」和「被切掉一截」。
         /// </summary>
         public required bool ContentClipped { get; init; }
+
+        /// <summary>
+        /// 竖排画布当前的主轴位移（DIP，负值表示已往前滚）。
+        ///
+        /// 从渲染树里读（<c>VerticalContainer.RenderTransform</c>），
+        /// 所以它证明的是「位移真的写到了画布上」——只断言几何公式的话，
+        /// 位移算对了却没挂到任何元素上，测试照样全绿。
+        /// </summary>
+        public required double ScrollOffset { get; init; }
+
+        /// <summary>
+        /// 按滚动公式独立算出的期望位移（DIP）。
+        ///
+        /// 与 <see cref="ScrollOffset"/> 比对，能同时抓住「没滚」「滚多了」
+        /// 「按整首最长句滚而不是按当前句」三类错误。
+        /// </summary>
+        public required double ExpectedScroll { get; init; }
     }
 }

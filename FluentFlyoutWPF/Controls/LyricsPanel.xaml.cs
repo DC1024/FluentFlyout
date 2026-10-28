@@ -216,6 +216,12 @@ public partial class LyricsPanel : UserControl
             if (_isVertical)
             {
                 EnsureVerticalLayout();
+
+                // 主轴长度（Width）是滚动几何的视口，换了就必须重算位移。
+                // EnsureVerticalLayout 内部也会调一次，但它在「输入没变」时早退，
+                // 而宽度变化不会改变建树输入（建树只看短边）——
+                // 「拉长任务栏后长句还在按旧视口滚」就是这么来的。
+                ApplyVerticalScroll();
             }
         };
 
@@ -413,6 +419,10 @@ public partial class LyricsPanel : UserControl
         // 重建后要凭这一份把灯补上（见 LyricsPanel.VerticalScan.cs）。
         TrackVerticalScan(frame);
 
+        // 长句滚动同理：位移也由重建后的内容长度算出来，
+        // 而重建发生在 ApplyFrame 之外（见 LyricsPanel.VerticalScroll.cs）。
+        TrackVerticalScroll(frame);
+
         if (_isVertical)
         {
             // 横向那套遮罩在竖向整块不可见（RootGrid 是 Collapsed），
@@ -493,12 +503,13 @@ public partial class LyricsPanel : UserControl
             return;
         }
 
-        // 竖排不走位移滚动：字形是从主轴起点逐格排下去的，
-        // 一列的容量（字号 13 时 44 字）本来就装得下整句，再横向位移
-        // 只会把已经排好的列推出画布。这里归零并返回。
+        // 竖排的位移不在这个 TextBlock 上，而在 VerticalContainer 整块画布上：
+        // 竖排是几十个独立字形块，逐块改 Canvas.SetLeft 是 50 次属性写 + 50 次
+        // 重排，挂在画布上的 TranslateTransform 每帧最多一次属性写。
         //
-        // 竖向的超长句处理见 LyricsPanel.Vertical.cs：超出可用主轴长度的部分
-        // 被面板的 ClipToBounds 裁掉，与横向「先滚动、后变宽」是两种取舍。
+        // 这里仍要先把横向那支位移归零：它此刻不可见（RootGrid 整块 Collapsed），
+        // 但状态留着会在切回横向时把整句推出面板。
+        // 竖向自己的滚动见 LyricsPanel.VerticalScroll.cs。
         if (_isVertical)
         {
             if (Math.Abs(transform.X) > 1e-6)
@@ -510,6 +521,7 @@ public partial class LyricsPanel : UserControl
             // 免得切回横向时带着上一次的偏移。
             SyncScanTransform(0);
 
+            ApplyVerticalScroll();
             return;
         }
 
