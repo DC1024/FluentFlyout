@@ -247,6 +247,26 @@ public partial class TaskbarWidgetControl : UserControl
     }
 
     /// <summary>
+    /// 切换竖排歌词的左右镜像。任务栏贴在屏幕左侧时传 true。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 只转交给面板，不改这里的任何度量：镜像换的是「两列谁在左」和
+    /// 「拉丁词朝哪边躺」，字号、行高、列距、主轴长度全都不动，
+    /// 所以不需要 <see cref="RefreshLyricsMetrics"/>，也不需要让尺寸缓存失效。
+    /// </para>
+    /// <para>
+    /// 幂等：<see cref="LyricsPanel.SetVerticalMirror"/> 自己会在值没变时早退，
+    /// 而 <c>PositionWidget</c> 每次 <c>UpdatePosition</c>（1.5s 定时器 +
+    /// 每次换行）都会调到这里。
+    /// </para>
+    /// </remarks>
+    public void SetVerticalMirror(bool mirrored)
+    {
+        LyricsPanel.SetVerticalMirror(mirrored);
+    }
+
+    /// <summary>
     /// 切换小任务栏模式（任务栏短边 &lt; 40 DIP）。
     /// </summary>
     /// <remarks>
