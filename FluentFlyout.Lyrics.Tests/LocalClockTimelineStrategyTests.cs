@@ -310,6 +310,29 @@ public sealed class LocalClockTimelineStrategyTests
     }
 
     /// <summary>
+    /// 对外暴露的「这个值会不会被采信」必须与 <see cref="LocalClockTimelinePositionStrategy.SetTrackEndEstimate"/>
+    /// 的实际行为一致。
+    ///
+    /// <para>
+    /// 之所以单独测：下发点的诊断日志用它来决定写「本地时钟会归位」还是
+    /// 「太短，本地时钟忽略」，两者一旦走散，日志会把丢弃说成采用——
+    /// 而这条日志存在的唯一理由就是排查这类问题。
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(0, false)]
+    [InlineData(29, false)]
+    [InlineData(30, true)]
+    [InlineData(215, true)]
+    public void IsPlausibleTrackDuration_MatchesAcceptanceRule(int? seconds, bool expected)
+    {
+        TimeSpan? estimate = seconds is { } value ? TimeSpan.FromSeconds(value) : null;
+
+        Assert.Equal(expected, LocalClockTimelinePositionStrategy.IsPlausibleTrackDuration(estimate));
+    }
+
+    /// <summary>
     /// 暂停在最后几秒时不能归零：歌词该停在用户看到的那一句上。
     /// 归零会让它在歌还没重播时跳回第一句。
     /// </summary>

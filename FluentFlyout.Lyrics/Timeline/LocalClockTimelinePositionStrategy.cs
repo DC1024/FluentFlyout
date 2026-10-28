@@ -138,13 +138,23 @@ public sealed class LocalClockTimelinePositionStrategy : ITimelinePositionStrate
         return Commit(next, now, sample.IsPlaying);
     }
 
+    /// <summary>
+    /// 这个曲长估计是否会被本策略采信。
+    ///
+    /// <para>
+    /// 单独暴露出来是给诊断日志用的：下发点在 WPF 层，它需要如实报出
+    /// 「这个值是被用了还是被丢了」，而门槛数字只应有一处定义——
+    /// 在日志里复制一份 30 秒，两边迟早会走散。
+    /// </para>
+    /// </summary>
+    public static bool IsPlausibleTrackDuration(TimeSpan? estimate) =>
+        estimate is { } value && value >= MinimumPlausibleTrackDuration;
+
     public void SetTrackEndEstimate(TimeSpan? estimate)
     {
         // 明显短于合理下限的值直接丢弃：宁可退回「无上限」的旧行为，
         // 也不要因为一个脏值把位置每帧归零、把歌词锁死在第一行。
-        _trackEndEstimate = estimate is { } value && value >= MinimumPlausibleTrackDuration
-            ? value
-            : null;
+        _trackEndEstimate = IsPlausibleTrackDuration(estimate) ? estimate : null;
     }
 
     private bool IsPastTrackEnd(TimeSpan position) =>
