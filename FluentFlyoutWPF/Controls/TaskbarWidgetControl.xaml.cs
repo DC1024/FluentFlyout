@@ -28,6 +28,26 @@ public partial class TaskbarWidgetControl : UserControl
     private const double DefaultTaskbarWidgetHeight = 40;
     private const double SmallTaskbarWidgetHeight = 28;
 
+    /// <summary>
+    /// 内容区相对控件高度的内缩（DIP）：<c>TopBorder</c> 的上边框 1.25 +
+    /// 下外边距 1.25。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 竖向歌词的折行宽度取「**可用**短边」而不是控件高度本身：40 的高度
+    /// 只剩 37.5 给内容。按 40 写给面板的后果是每行文本都比视口宽 2.5 DIP，
+    /// 右边缘（竖向下即屏幕下方）被切掉一条——不报错、不裁剪整行，
+    /// 只是每个字都缺一点边，肉眼几乎判不出来。
+    /// </para>
+    /// <para>
+    /// 改 <c>TaskbarWidgetControl.xaml</c> 里 <c>TopBorder</c> 的
+    /// <c>BorderThickness</c> / <c>Margin</c> 时必须同步这里；
+    /// <c>TaskbarVerticalLyricsWiringTests.WrapWidthEqualsAvailableCrossSize</c>
+    /// 会拿真实布局量出的可用短边来校验两者一致，改漏了会红。
+    /// </para>
+    /// </remarks>
+    private const double WidgetCrossInset = 2.5;
+
     // Constants for cover image and control button sizes
     private const double DefaultCoverImageSize = 36;
     private const double SmallCoverImageSize = 24;
@@ -67,10 +87,17 @@ public partial class TaskbarWidgetControl : UserControl
     private double _cachedArtistContainerWidth = -1;
 
     /// <summary>
-    /// 竖向时写进 <see cref="LyricsPanel"/> 的折行宽度（DIP，任务栏短边）。
+    /// 竖向时写进 <see cref="LyricsPanel"/> 的折行宽度（DIP，可用短边）。
     /// 用 NaN 表示「还没写过」，方向切换时清回 NaN 以强制重写。
     /// </summary>
     private double _cachedLyricsPanelWidth = double.NaN;
+
+    /// <summary>
+    /// 竖向时写进 <see cref="LyricsPanel"/> 的主轴长度（DIP，面板自身的高度）。
+    /// 与 <see cref="_cachedLyricsPanelWidth"/> 一样用 NaN 表示「还没写过」，
+    /// 方向切换时清空，否则横向会继承竖向留下的固定高度。
+    /// </summary>
+    private double _cachedLyricsPanelHeight = double.NaN;
     private readonly int _extraMarginForText = 6; // additional margin to avoid text clipping
 
     private double _cachedTitleOpacityMaskWidth = -1;
@@ -215,6 +242,7 @@ public partial class TaskbarWidgetControl : UserControl
             _cachedTitleContainerWidth = double.NaN;
             _cachedArtistContainerWidth = double.NaN;
             _cachedLyricsPanelWidth = double.NaN;
+            _cachedLyricsPanelHeight = double.NaN;
         }
     }
 
@@ -520,10 +548,21 @@ public partial class TaskbarWidgetControl : UserControl
                 ? LyricsMetricsPolicy.SmallTaskbarCrossSize
                 : LyricsMetricsPolicy.DefaultTaskbarCrossSize;
 
+            var wrapWidth = ResolveVerticalWrapWidth(crossSize);
+
+            // 折行宽度必须在估算之前写进面板：估算与实测都按它算行数，
+            // 不先写就还是上一轮的宽度（首帧是 40/28 都没写过的 NaN）。
+            // 这一步**不产生额外布局遍**——数值没变时 Apply 会早退。
+            ApplyVerticalLyricsPanelWidth(wrapWidth);
+
+            // 估算上限换算成布局 DIP：EstimateMainAxisLength 用的是
+            // 面板坐标系（与 FormattedText 的行高同一单位），返回值同样是
+            // 布局 DIP；而本方法的返回值约定是**视觉 DIP**（与 216/480 同源）。
+            // 两者差一个 _scale，混用会让上限多出 1/0.9 倍。
             var estimate = LyricsVerticalLayout.EstimateMainAxisLength(
                 content: LyricsPanel.MeasureVerticalContent(),
-                crossSize: crossSize,
-                maxLength: maxMainAxisLength);
+                crossSize: wrapWidth,
+                maxLength: maxMainAxisLength / _scale);
 
             // 用面板的**实测内容高度**兜住估算偏小的一侧。
             //
@@ -534,13 +573,14 @@ public partial class TaskbarWidgetControl : UserControl
             //
             // 只取较大者、不做双向对齐：估算偏大是宿主主动申请的占位，
             // 缩回去会让任务栏留空白，且下一帧估算又撑起来，形成抖动。
-            var measured = LyricsPanel.VerticalContentHeight;
-            if (double.IsFinite(measured) && measured > estimate)
-            {
-                return Math.Min(measured, maxMainAxisLength);
-            }
+            var contentHeight = Math.Max(estimate, LyricsPanel.VerticalContentHeight);
 
-            return estimate;
+            // 转成视觉 DIP：面板在 MainGrid 的 0.9 缩放里，
+            // 布局 DIP × _scale 才是它在任务栏上实际占的长度。
+            // 面板前面还排着封面与两个左间距，也要一并算进占位。
+            var desired = (contentHeight + MeasureVerticalLeadIn()) * _scale;
+
+            return Math.Min(Math.Max(desired, 0), maxMainAxisLength);
         }
 
         var coverImageMargin = _isSmallTaskbar ? SmallCoverImageMargin : DefaultCoverImageMargin;
@@ -848,6 +888,15 @@ public partial class TaskbarWidgetControl : UserControl
             ? Math.Max((budget / _scale) - budgetDeduction, 0)
             : _nativeWidgetsPadding / _scale;
 
+        // 竖向时这是屏幕上的**横向宽度**，也就是任务栏宽度——TaskbarWindow
+        // 会把它写成 Widget.Height（physicalHeight / dpiScale）。
+        //
+        // 返回 40 / 28（任务栏短边的标准值）：TaskbarWindow 的 crossPos 计算是
+        // `(crossSize - physicalHeight) / 2`，若两边取同一来源（都来自
+        // SettingsManager 的短边判定），居中的结果才稳定。
+        // 折行宽度由它减去容器内缩得到（见 ResolveVerticalWrapWidth）。
+        double logicalHeight = _isSmallTaskbar ? SmallTaskbarWidgetHeight : DefaultTaskbarWidgetHeight;
+
         double logicalWidth;
 
         if (_isVertical && _isLyricsMode)
@@ -863,12 +912,33 @@ public partial class TaskbarWidgetControl : UserControl
             //
             // 所以这里的 logicalWidth 要的是「沿主轴占多长」，而
             // maxLogicalWidth 正是 TaskbarWindow 传下来的主轴预算
-            // （竖向时它算的是任务栏高度方向的可用区间），直接用。
+            // （竖向时它算的是任务栏高度方向的可用区间）。
             //
             // 不扣 controlsWidth：播放按钮组在竖向时被反向旋转成竖排，
             // 占的是主轴方向的一小段，已经由 MeasureDesiredWidth 的
             // 折行估算隐含包含在内容里；再扣一次会让可用长度凭空少一截。
-            logicalWidth = maxLogicalWidth;
+            //
+            // 顺序有讲究：先写折行宽度（行数由它决定），再量内容高度，
+            // 最后把长度写回面板。写反了量的就是上一轮的宽度。
+            ApplyVerticalLyricsPanelWidth(ResolveVerticalWrapWidth(logicalHeight));
+
+            var leadIn = MeasureVerticalLeadIn();
+            var availableMainAxis = Math.Max(maxLogicalWidth - leadIn, 0);
+            var contentHeight = LyricsPanel.VerticalContentHeight;
+
+            // 内容还没量出来（首帧、或折行宽度刚被清空）时退回整个可用区间，
+            // 保持改动前的行为：宁可先占满，也不要先塌成 0 再跳变。
+            var mainAxis = contentHeight > 0
+                ? Math.Min(contentHeight, availableMainAxis)
+                : availableMainAxis;
+
+            ApplyVerticalLyricsPanelMainAxis(mainAxis);
+
+            // 面板是横向 StackPanel 的子项，它的主轴长度由自己的高度决定
+            // （-90 变换把面板高度映射成父级宽度）。小组件必须比
+            // 「前面排的封面与间距 + 面板」更长，否则尾部整行被
+            // MainBorder 的 ClipToBounds 吃掉——这正是改动前面板上限 6 个字的成因。
+            logicalWidth = Math.Min(mainAxis + leadIn, maxLogicalWidth);
         }
         else if (_isVertical)
         {
@@ -937,44 +1007,113 @@ public partial class TaskbarWidgetControl : UserControl
             logicalWidth += controlsWidth;
         }
 
-        // 竖向时 logicalHeight 是屏幕上的**横向宽度**，也就是任务栏宽度——
-        // TaskbarWindow 会把它写成 Widget.Height（physicalHeight / dpiScale）。
-        //
-        // 这里仍然返回 40 / 28（任务栏短边的标准值）：TaskbarWindow 的
-        // crossPos 计算是 `(crossSize - physicalHeight) / 2`，若两边取同一来源
-        // （都来自 SettingsManager 的短边判定），居中的结果才稳定。
-        // 这个返回值同时就是折行宽度——下面立刻写给面板，面板不该、也无法
-        // 自己从 ActualWidth 推出来。
-        double logicalHeight = _isSmallTaskbar ? SmallTaskbarWidgetHeight : DefaultTaskbarWidgetHeight;
+        // 竖向歌词面板的宽度（折行宽度）与高度（主轴长度）都已经在上面那个
+        // 分支里写完了，这里不再重复写：两个值必须**同时**就位，
+        // 分开写会让中间那一帧按旧宽度量高度。
+        return (logicalWidth, logicalHeight);
+    }
 
-        // 竖向歌词必须在这里显式写入折行宽度，否则面板宽度是 0，文字被整块剪掉。
-        //
-        // 为什么不能靠「面板自身实际宽度」：LyricsPanel 的根是
-        // HorizontalAlignment=Left 的 UserControl，内容全在 Canvas 里，
-        // 而 Canvas.MeasureOverride 对任何内容都返回 (0,0)。它被放在
-        // 横向 StackPanel 里（MainStackPanel，Width=Auto），于是排列时
-        // 拿到的是**内容期望宽度 0**，ActualWidth 也就是 0。
-        // 接着 ResolveVerticalViewport() 返回 0、UpdateVerticalWrapLayout()
-        // 首行早退，PrimaryContainer.Height 保持 XAML 里的 19、Width 仍是 0，
-        // 叠上面板的 ClipToBounds=True 就是「一个字都看不见」。
-        // SizeChanged 也救不回来——尺寸从 0 到 0 根本不会触发。
-        //
-        // 折行宽度取 logicalHeight：竖向时它对应屏幕上的**横向**宽度，
-        // 也就是任务栏短边（40 / 28 DIP），正是文字该折的那条边。
-        // 主轴方向的长度不写：面板高度由折行结果决定（见
-        // LyricsPanel.UpdateVerticalWrapLayout 里的实测逻辑）。
-        if (_isVertical && _isLyricsMode)
+    /// <summary>
+    /// 竖向歌词的折行宽度（布局 DIP）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 不是任务栏短边本身，而是它减去容器内缩后的**可用**短边：
+    /// 小组件的 <c>TopBorder</c> 占掉上边框 1.25 + 下外边距 1.25，
+    /// 40 的高度只剩 37.5 给内容。按 40 写给面板，文本的每一行都会比
+    /// 视口宽 2.5 DIP，右边缘（竖向下即屏幕下方）被切掉一条——
+    /// 不报错、不裁剪整行，只是每个字都缺一点边，肉眼几乎判不出来。
+    /// </para>
+    /// <para>
+    /// 写入必须早于任何「量高度」的调用（<see cref="MeasureDesiredWidth"/> 与
+    /// <see cref="CalculateSize"/> 都是）：折成几行由折行宽度决定。
+    /// </para>
+    /// </remarks>
+    private double ResolveVerticalWrapWidth(double crossDip)
+    {
+        var usable = crossDip - WidgetCrossInset;
+
+        // 小任务栏在极端 DPI 下可能算到 0 以下，兜一个正数：
+        // 折行宽度为 0 会让面板整块不显示，比窄一点严重得多。
+        return usable > 0 ? usable : crossDip;
+    }
+
+    /// <summary>
+    /// 竖向时，主轴上排在歌词面板**前面**的长度（布局 DIP）。
+    /// </summary>
+    /// <remarks>
+    /// 面板挂在横向 <c>MainStackPanel</c> 里，前面依次是
+    /// <c>MainStackPanel.Margin.Left</c>、封面缩略图、<c>LyricsPanel.Margin.Left</c>。
+    /// 这些长度都不在面板内部，但小组件的 <c>logicalWidth</c> 必须覆盖它们，
+    /// 否则面板被挤到小组件边界外、尾部整行被 <c>MainBorder</c> 裁掉。
+    ///
+    /// 数值全部从 XAML 现场读，不复制常量——封面尺寸或间距改过一次，
+    /// 这里就自动跟上。
+    /// </remarks>
+    private double MeasureVerticalLeadIn()
+    {
+        var leadIn = MainStackPanel.Margin.Left + LyricsPanel.Margin.Left;
+
+        if (SongImageBorder.Visibility == Visibility.Visible)
         {
-            ApplyVerticalLyricsPanelWidth(logicalHeight);
+            leadIn += SongImageBorder.Width;
         }
 
-        return (logicalWidth, logicalHeight);
+        return leadIn;
+    }
+
+    /// <summary>
+    /// 把「主轴长度」写给竖向的歌词面板。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 写的是 <c>Height</c> 而不是 <c>Width</c>：面板自己挂着
+    /// <c>LayoutTransform(-90)</c>，<b>面板的高度映射到父级的宽度</b>，
+    /// 也就是任务栏主轴方向；面板的宽度才是折行宽度（任务栏短边）。
+    /// 弄反了会得到一条极长的横条，一个字都不折行。
+    /// </para>
+    /// <para>
+    /// 为什么必须写：面板是横向 StackPanel 的子项，横向 StackPanel 给子级的
+    /// 约束是「主轴无限、交叉轴 = 自身高度」，而交叉轴正好映射到面板的
+    /// **宽度**（折行宽度），映射不到高度。于是面板高度只能由内容撑，
+    /// 而内容在 Canvas 里、<c>Canvas.MeasureOverride</c> 恒返回 (0,0)——
+    /// 撑不起来。实测真机：内容需要 223.9 DIP，面板只排到 37.5 DIP，
+    /// 每列 3 个字、只显示 2 列，第 7 个字往后静默消失。
+    /// </para>
+    /// 只在数值真的变了才写，理由同 <see cref="ApplyVerticalLyricsPanelWidth"/>。
+    /// </remarks>
+    private void ApplyVerticalLyricsPanelMainAxis(double mainAxisDip)
+    {
+        if (!double.IsFinite(mainAxisDip) || mainAxisDip <= 0)
+        {
+            return;
+        }
+
+        if (double.IsFinite(_cachedLyricsPanelHeight)
+            && Math.Abs(_cachedLyricsPanelHeight - mainAxisDip) < 0.01)
+        {
+            return;
+        }
+
+        _cachedLyricsPanelHeight = mainAxisDip;
+        LyricsPanel.Height = mainAxisDip;
     }
 
     /// <summary>
     /// 把「折行宽度」写给竖向的歌词面板。
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// 必须写，否则面板宽度是 0、文字被整块剪掉。为什么不能靠「面板自身
+    /// 实际宽度」：<c>LyricsPanel</c> 的根是 <c>HorizontalAlignment=Left</c> 的
+    /// UserControl，内容全在 Canvas 里，而 <c>Canvas.MeasureOverride</c> 对任何
+    /// 内容都返回 (0,0)。它被放在横向 StackPanel 里（<c>MainStackPanel</c>，
+    /// <c>Width=Auto</c>），于是排列时拿到的是**内容期望宽度 0**，
+    /// <c>ActualWidth</c> 也就是 0；接着 <c>ResolveVerticalViewport()</c> 返回 0、
+    /// <c>UpdateVerticalWrapLayout()</c> 首行早退，PrimaryContainer 的宽度仍是 0，
+    /// 叠上面板的 <c>ClipToBounds=True</c> 就是「一个字都看不见」。
+    /// <c>SizeChanged</c> 也救不回来——尺寸从 0 到 0 根本不会触发。
+    /// </para>
     /// <para>
     /// 只在数值真的变了才写：<c>CalculateSize</c> 由 1.5s 定时器、每次换歌、
     /// 每次歌词换行驱动，无条件写 <c>Width</c> 会每轮触发一次布局遍。

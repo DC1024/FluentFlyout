@@ -1279,10 +1279,12 @@ public partial class LyricsPanel : UserControl
             PrimaryScanText.Width = double.NaN;
             SecondaryText.Width = double.NaN;
 
-            // 面板自身的宽度也要清掉：竖向时宿主的 CalculateSize 会把它写成
-            // 「任务栏短边」（40/28 DIP），横向必须回到 Auto 交给宿主重写，
-            // 否则会在一帧里按 40 宽折行，长句被切。
+            // 面板自身的尺寸也要清掉：竖向时宿主的 CalculateSize 会把宽度写成
+            // 「可用短边」、高度写成「折行后的主轴长度」。横向两者都必须回到
+            // Auto 交给宿主重写，否则会在一帧里按 40 宽折行、或按竖向的高度
+            // 留一条空白。
             Width = double.NaN;
+            Height = double.NaN;
             _lastWrapViewport = -1;
 
             if (_hasMetrics)
@@ -1477,9 +1479,13 @@ public partial class LyricsPanel : UserControl
     /// 外层容器高度不够、最后一行被 <c>ClipToBounds</c> 整行裁掉，
     /// 而截图上看起来只是「字少了点」，很难发现。
     ///
-    /// 宿主取 <c>max(估算, 本属性)</c> 即可兜住偏小的一侧。
+    /// 宿主取 <c>max(估算, 本属性)</c> 即可兜住偏小的一侧，
+    /// 并按它给面板写固定高度（竖向时面板自身的高度就是主轴长度）。
     ///
-    /// 返回值是 0 表示「还没布局完」或「不在竖向」，调用方应忽略它。
+    /// 返回值是 0 表示「不在竖向」「还没度量」或「折行宽度还没由宿主写入」——
+    /// 都不是错误，调用方应退回自己的兜底值。
+    /// **它不需要先跑一轮布局**：折行高度是 <c>FormattedText</c> 现算的，
+    /// 只有折行宽度（<c>Panel.Width</c>，由宿主写）是前提。
     /// </summary>
     public double VerticalContentHeight
     {
@@ -1490,11 +1496,27 @@ public partial class LyricsPanel : UserControl
                 return 0;
             }
 
-            // 先把两行的高度按实测折行结果写对，RootGrid 才会撑到真实高度。
+            // 先把两行的高度按实测折行结果写对——这一步是同步的
+            //（FormattedText 直接量高度，不依赖布局遍）。
             UpdateVerticalWrapLayout();
 
-            var height = RootGrid.ActualHeight;
-            return double.IsFinite(height) && height > 0 ? height : 0;
+            // 取两行刚写回去的高度之和，**刻意不读 RootGrid.ActualHeight**。
+            //
+            // 两个原因，都是真机上量到过的：
+            //   1. ActualHeight 要等一整轮布局才会更新，而宿主在
+            //      <c>CalculateSize</c> 里就要用这个值决定「小组件沿主轴占多长」。
+            //      读到上一轮的旧值，小组件就永远比内容短一行，最后一行被裁。
+            //   2. 一旦宿主按这个值给面板写了固定高度（见
+            //      <c>TaskbarWidgetControl.ApplyVerticalLyricsPanelMainAxis</c>），
+            //      RootGrid 的 ActualHeight 就变成「宿主要多高」而不是
+            //      「内容要多高」——读它等于自证，内容被裁之后再也不会长回来。
+            var primary = PrimaryContainer.Height;
+            var secondary = SecondaryContainer.Height;
+
+            var total = (double.IsFinite(primary) ? Math.Max(primary, 0) : 0)
+                        + (double.IsFinite(secondary) ? Math.Max(secondary, 0) : 0);
+
+            return total;
         }
     }
     ///
