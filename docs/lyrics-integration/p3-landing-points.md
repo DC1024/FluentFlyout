@@ -577,10 +577,49 @@ advance 是 1 em，黑墨只占中间约 0.85—0.95 em；小字号下 ClearType
 CI 检出时 `autocrlf=true` 正好合规。格式这项以 CI 为准；本地只用 `--include`
 单查某个文件，抓与行尾无关的规则（如 `FINALNEWLINE`）。
 
+#### 7.2.6 真机摆不出竖向任务栏，就退一步验装配链
+
+竖向一直缺一个「真机截图」，但**这台机器上做不到**：Win11（build 26300）的任务栏
+只能贴在屏幕底边，`StuckRects3` 的 edge 字节恒为 3（0/1/2 分别对应左/上/右）。
+没有竖排任务栏，就没有竖着的小组件可以截。
+
+替代方案是把「除任务栏定位之外」的每一层都换成生产代码：新建
+`VerticalWidgetProbe`（`Probe.Screenshot --assembly`），构造真实的
+`TaskbarWidgetControl`，走
+`SetLyricsMode → SetVerticalMode → MeasureDesiredWidth → CalculateSize`，
+再按 `TaskbarWindow.PositionWidget` 的写法（尺寸写在控件自身、
+`LayoutTransform = +90`、外面包一层 Canvas 当任务栏）排版渲染。
+
+主矩阵与它的分工值得写清楚：
+
+| | 尺寸来源 | 能抓到什么 |
+|---|---|---|
+| 主矩阵（72 张） | 夹具直接写 `Panel.Width/Height` | 面板内部的排版、朝向、裁切 |
+| 装配链（8 张） | 生产 `CalculateSize` | 宿主把尺寸写错（历史缺陷都在这里） |
+
+实测（29 字长句，短边 40 / 28）：
+
+| 短边 | `panel.Height` | `VerticalContentLength` | `panel.Width` | 墨迹包围盒 | 列数 |
+|---|---|---|---|---|---|
+| 40 | 37.5 | 377.0 | 377.0 | 26 × 340 | 2（主行 + 下一行）|
+| 28 | 25.5 | 377.0 | 377.0 | 13 × 339 | 1（译文列被丢弃）|
+
+`37.5 = 40 − 2.5`（`WidgetCrossInset`），`377 = 29 字 × 13 px`——两个数都对得上，
+说明尺寸链两端都对：短边从宿主减内缩后写进面板，主轴长度由面板上报、宿主只做
+clamp。28 DIP 那一行同时验证了「两列装不下就丢译文列」这条硬约束在宿主层也成立。
+
+**它管不到的**：`TaskbarWindow` 的吸附/避让/多显示器、任务栏自身的透明与主题色、
+以及真实 SMTC 帧的到达节奏。这些仍然只有真机能验。
+
+**单位陷阱**（踩过一次）：`MeasureDesiredWidth` 返回的是**视觉 DIP**（内部乘过
+`_scale`），`CalculateSize` 的 `availableWidth` 收的也是视觉 DIP。早先的探针
+在这个值上又乘了一次 0.9，预算凭空少 11%，长句被判成「被裁」。
+
 ### 7.3 归档截图
 
-`Probe.Screenshot` 每次生成 72 张，代表性样本归档在
-`docs/lyrics-integration/screenshots/`（全量产物在 `bin/.../shots/`）：
+`Probe.Screenshot` 每次生成 72 张（另有 `--assembly` 的 8 张整机图），代表性
+样本归档在 `docs/lyrics-integration/screenshots/`（全量产物在 `bin/.../shots/`
+与 `bin/.../assembly/`）：
 
 | 文件 | 内容 | 验证点 |
 |---|---|---|
@@ -593,9 +632,13 @@ CI 检出时 `autocrlf=true` 正好合规。格式这项以 CI 为准；本地�
 | `Q-vertical-dark-two-line.png` | 竖向 · 深色 | 深色主题对比度 |
 | `R-horizontal-200-word-scan.png` | 横向 · 200% · 逐字扫描 | 扫描遮罩位置与 DPI 无关 |
 | `S-vertical-mixed-latin.png` | 竖向 · 200% · 中英混排 | **拉丁词整词侧躺、汉字正立** |
+| `T-assembly-two-column.png` | 整机 · 短边 40 | 封面 + **两列**：右列主行、左列下一行；尺寸来自 `CalculateSize` |
+| `U-assembly-single-column.png` | 整机 · 短边 28 · 深色 | 只一列：28 DIP 放不下两列，丢译文列保主列 |
 
 竖排那六张（M/N/O/P/Q/S）是逐字竖排这一版的回归样本：将来若有人动了
 `LyricsPanel.Vertical.cs` 里的朝向判定或列布局，它们会先变。横向那三张
-（K/L/R）没有变——横向走的仍是原来的折行 + 滚动路径。
+（K/L/R）没有变——横向走的仍是原来的折行 + 滚动路径。T/U 两张是**宿主层**
+的样本：它们连封面缩略图一起截进来，因为要证明「面板确实被排在了歌词该在
+的位置上」，而不只是面板内部画对了。
 
 

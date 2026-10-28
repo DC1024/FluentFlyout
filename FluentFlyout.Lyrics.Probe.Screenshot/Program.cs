@@ -71,8 +71,18 @@ internal static class Program
     private sealed record Variant(string Name, double CrossSize, double FontSize);
 
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
+        // --assembly：只跑「整机装配链」那支（见 VerticalWidgetProbe）。
+        //
+        // 单独一支、而不是并入主矩阵，是为了让 CI 上的失败可归因：
+        // 矩阵红 = 面板自身的排版/朝向坏了；装配链红 = 宿主把尺寸写错了。
+        // 这两类缺陷的修法完全不同，混在一个退出码里会互相掩盖。
+        if (args.Any(a => string.Equals(a, "--assembly", StringComparison.OrdinalIgnoreCase)))
+        {
+            return VerticalWidgetProbe.Run() == 0 ? 0 : 1;
+        }
+
         var outputDirectory = Path.Combine(AppContext.BaseDirectory, "shots");
         if (Directory.Exists(outputDirectory))
         {
