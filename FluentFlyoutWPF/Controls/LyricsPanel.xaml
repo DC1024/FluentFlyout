@@ -75,7 +75,20 @@
         <!--
             竖排画布：每个「排版格」一个 TextBlock，由 LyricsPanel.Vertical.cs
             在代码里建树。横向时 Collapsed（不测量、不绘制）。
+
+            这里**没有** ClipToBounds，是刻意的：长句要沿主轴平移，而
+            RenderTransform 会连元素自己的裁剪框一起搬走——留在这一层裁，
+            被裁掉的那一截就永远出不来（平移到哪儿，窗口就跟到哪儿）。
+            裁剪交给面板自身（根元素上的 ClipToBounds="True"），它在变换
+            之外，窗口固定不动。见 LyricsPanel.VerticalScroll.cs。
+
+            平移挂在整块画布上，不逐块改 Canvas.SetLeft：一次属性写
+            对比 50 次，而后者每次都会让对应子项重新 Arrange。
         -->
-        <Canvas x:Name="VerticalContainer" ClipToBounds="True" Visibility="Collapsed" />
+        <Canvas x:Name="VerticalContainer" Visibility="Collapsed">
+            <Canvas.RenderTransform>
+                <TranslateTransform />
+            </Canvas.RenderTransform>
+        </Canvas>
     </Grid>
 </UserControl>

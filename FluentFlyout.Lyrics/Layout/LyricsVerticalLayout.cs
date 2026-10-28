@@ -49,9 +49,15 @@ public static class LyricsVerticalLayout
     ///
     /// 480 是 216（原生小组件占位）的 2.2 倍，100% DPI 下约 32 个汉字，
     /// 再多就会开始盖住任务栏中部的应用按钮。**它不是普适常量**：
-    /// 4K 竖屏的主轴有两千多 DIP，480 只占四分之一，长句会在半途被截断
-    ///（竖排没有滚动，超出的行直接被 ClipToBounds 吃掉）。所以真实上限
-    /// 由 <see cref="ResolveMaxMainAxisLength"/> 按任务栏实际长度推。
+    /// 4K 竖屏的主轴有两千多 DIP，480 只占四分之一，长句会在半途被截断。
+    /// 所以真实上限由 <see cref="ResolveMaxMainAxisLength"/> 按任务栏实际长度推。
+    ///
+    /// <para>
+    /// 超出这个值的部分靠滚动补，不再是被裁掉：一句 51 字的歌词排出来
+    /// 约 663 DIP，面板沿主轴平移就能把后半句带进视口
+    /// （见 <c>LyricsPanel.VerticalScroll.cs</c>）。这个值因此从
+    /// 「能看到几个字」变成了「一次能同时看到几个字」。
+    /// </para>
     /// </summary>
     public const double DefaultMaxMainAxisLength = 480;
 

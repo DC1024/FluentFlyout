@@ -538,9 +538,10 @@ public partial class TaskbarWidgetControl : UserControl
     ///
     /// 由调用方按任务栏实际主轴长度现算（<c>TaskbarWindow</c> →
     /// <see cref="LyricsVerticalLayout.ResolveMaxMainAxisLength"/>）。
-    /// 用参数而不是常量，是因为竖排**没有滚动**：估算值一旦超过上限，
-    /// 超出的行会被整行裁掉，屏幕上表现为「句子没写完」。4K 竖屏的主轴
-    /// 有两千多 DIP，跟 1080p 用同一个 480 会把长句切在半途。
+    /// 用参数而不是常量，是因为这个值直接决定**一句能看到几个字**：
+    /// 4K 竖屏的主轴有两千多 DIP，跟 1080p 用同一个 480 会让长句多滚一大截。
+    /// 超出的部分不再被裁掉，而是照样排出来、靠面板沿主轴平移带进视口
+    /// （见 <c>LyricsPanel.VerticalScroll.cs</c>）。
     /// </param>
     public double MeasureDesiredWidth(double maxMainAxisLength = MaxLyricsWidgetLength)
     {

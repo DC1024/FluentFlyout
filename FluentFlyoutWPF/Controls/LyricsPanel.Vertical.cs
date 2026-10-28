@@ -349,6 +349,11 @@ public partial class LyricsPanel
         // 宿主写短边都可能重建），必须立刻补一次——否则要等下一帧，
         // 30fps 下就是 33ms 的整列全亮，看得见。
         ApplyVerticalScan();
+
+        // 位移同理，而且更依赖这一步：重建会换掉 _verticalContentLength，
+        // 而滚动长度按「当前这一句」算（见 LyricsPanel.VerticalScroll.cs），
+        // 不在这里补算，换行后的长句会按上一句的长度停在错误的偏移上。
+        ApplyVerticalScroll();
     }
 
     /// <summary>
@@ -599,6 +604,7 @@ public partial class LyricsPanel
         _verticalPrimaryBlocks.Clear();
         _verticalSecondaryBlocks.Clear();
         ResetVerticalScanBookkeeping();
+        ResetVerticalScroll();
         _verticalKey = null;
         _verticalContentLength = 0;
         _verticalDocumentLength = 0;
