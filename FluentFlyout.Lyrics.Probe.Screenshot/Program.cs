@@ -283,17 +283,28 @@ internal static class Program
         // 沿用旧判据只会得到 19 张「故意失败」的红图（一列 13px < 1.7×13）。
         //
         // 新判据守的是另一条底线——字不能挤成一团、列不能探出短边：
-        //   下界 0.9 字号：一列里至少站得下一个完整字（含窄的半角字与标点）
-        //   上界 短边    ：第二列一旦溢出，就会被 ClipToBounds 切掉
+        //   下界 0.75 字号：一列里至少站得下一个完整字
+        //   上界 短边     ：第二列一旦溢出，就会被 ClipToBounds 切掉
+        //
+        // 下界为什么是 0.75 而不是 0.9：
+        //   汉字墨迹本来就比 em 方框小一圈——advance 是 1em，黑墨只占中间
+        //   约 0.85em（CJK 字体两侧留边）。小字号下 ClearType 又把墨迹量化
+        //   到整像素，比例连单调都不是：CI 机器上 13px 量到 12px 墨迹
+        //   （0.92），14px 仍量到 12px（0.86）。0.9 的旧下界正好卡在 0.857
+        //   这条线上，于是 v28-font20 一档 6 张图全红——而那几张的渲染是
+        //   对的（截图里 8 个字竖成一列、笔画完整），错的只是阈值。
+        //   0.75 仍抓得住真正的塌缩：被横向压扁或裁掉一半的字约 0.5em。
         foreach (var r in edgeResults.Where(x => x.IsVertical))
         {
-            var minColumn = r.FontSize * 0.9;
+            const double MinColumnRatio = 0.75;
+            var minColumn = r.FontSize * MinColumnRatio;
+            var ratio = r.FontSize > 0 ? r.InkBounds.Width / r.FontSize : 0;
 
             Check(
                 $"{r.Name}：竖向每列一个字宽，且不探出短边",
                 r.InkBounds.Width >= minColumn && r.InkBounds.Width <= r.ViewportWidth + 1,
-                $"墨迹宽={r.InkBounds.Width:F0}px，字号={r.FontSize:F0}px，" +
-                $"短边={r.ViewportWidth:F0}px");
+                $"墨迹宽={r.InkBounds.Width:F0}px，字号={r.FontSize:F0}px" +
+                $"（{ratio:P0}），短边={r.ViewportWidth:F0}px");
         }
 
         Console.WriteLine();
