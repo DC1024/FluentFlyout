@@ -65,6 +65,12 @@ public partial class TaskbarWidgetControl : UserControl
     private double _cachedArtistWidth = 0;
     private double _cachedTitleContainerWidth = -1;
     private double _cachedArtistContainerWidth = -1;
+
+    /// <summary>
+    /// 竖向时写进 <see cref="LyricsPanel"/> 的折行宽度（DIP，任务栏短边）。
+    /// 用 NaN 表示「还没写过」，方向切换时清回 NaN 以强制重写。
+    /// </summary>
+    private double _cachedLyricsPanelWidth = double.NaN;
     private readonly int _extraMarginForText = 6; // additional margin to avoid text clipping
 
     private double _cachedTitleOpacityMaskWidth = -1;
@@ -200,6 +206,15 @@ public partial class TaskbarWidgetControl : UserControl
             }
 
             RefreshLyricsMetrics();
+
+            // 方向翻转后宽度语义整个换了一套（横向是「主轴预算 − 封面」，
+            // 竖向是「任务栏短边」），旧缓存值和新语义没有可比性。
+            // 不做这件事的后果很具体：竖向下把面板宽度写成 40，切回横向时
+            // 若某首歌算出来的宽度恰好也是 40，`widthChanged` 为 false，
+            // 面板就永久停在竖向那套宽度上，横向也跟着坏。
+            _cachedTitleContainerWidth = double.NaN;
+            _cachedArtistContainerWidth = double.NaN;
+            _cachedLyricsPanelWidth = double.NaN;
         }
     }
 
@@ -897,11 +912,11 @@ public partial class TaskbarWidgetControl : UserControl
         // 歌词模式下容器宽度同时决定歌词视口宽度，必须一起更新，
         // 否则长句滚动会按旧的视口宽度算，滚出边界。
         //
-        // 竖向时不设：竖向下 LyricsPanel 的宽度由「任务栏宽度」决定，
-        // 与这里的 logicalWidth（主轴长度）不是同一个量。竖向下
-        // logicalWidth 对应屏幕纵向延伸，写进 LyricsPanel.Width 会让面板
-        // 变成一条极长的横条，换行完全失效。竖向的折行宽度由
-        // LyricsPanel.UpdateVerticalWrapLayout 从面板自身的实际宽度取。
+        // 竖向不走这里：竖向下 LyricsPanel 的宽度是「任务栏短边」，与这里的
+        // logicalWidth（主轴长度）不是同一个量，写进去会让面板变成一条极长的
+        // 横条、换行彻底失效。竖向的折行宽度由本方法末尾单独写入
+        // （ApplyVerticalLyricsPanelWidth），**不能**寄希望于面板从自身
+        // ActualWidth 取——那个值在这里恒为 0，见下方注释。
         if (_isLyricsMode && !_isVertical && widthChanged)
         {
             LyricsPanel.Width = newTitleContainerWidth;
@@ -928,11 +943,65 @@ public partial class TaskbarWidgetControl : UserControl
         // 这里仍然返回 40 / 28（任务栏短边的标准值）：TaskbarWindow 的
         // crossPos 计算是 `(crossSize - physicalHeight) / 2`，若两边取同一来源
         // （都来自 SettingsManager 的短边判定），居中的结果才稳定。
-        // 真正的折行宽度由 LyricsPanel.UpdateVerticalWrapLayout 从
-        // 面板自身的实际宽度取，不依赖这个返回值。
+        // 这个返回值同时就是折行宽度——下面立刻写给面板，面板不该、也无法
+        // 自己从 ActualWidth 推出来。
         double logicalHeight = _isSmallTaskbar ? SmallTaskbarWidgetHeight : DefaultTaskbarWidgetHeight;
 
+        // 竖向歌词必须在这里显式写入折行宽度，否则面板宽度是 0，文字被整块剪掉。
+        //
+        // 为什么不能靠「面板自身实际宽度」：LyricsPanel 的根是
+        // HorizontalAlignment=Left 的 UserControl，内容全在 Canvas 里，
+        // 而 Canvas.MeasureOverride 对任何内容都返回 (0,0)。它被放在
+        // 横向 StackPanel 里（MainStackPanel，Width=Auto），于是排列时
+        // 拿到的是**内容期望宽度 0**，ActualWidth 也就是 0。
+        // 接着 ResolveVerticalViewport() 返回 0、UpdateVerticalWrapLayout()
+        // 首行早退，PrimaryContainer.Height 保持 XAML 里的 19、Width 仍是 0，
+        // 叠上面板的 ClipToBounds=True 就是「一个字都看不见」。
+        // SizeChanged 也救不回来——尺寸从 0 到 0 根本不会触发。
+        //
+        // 折行宽度取 logicalHeight：竖向时它对应屏幕上的**横向**宽度，
+        // 也就是任务栏短边（40 / 28 DIP），正是文字该折的那条边。
+        // 主轴方向的长度不写：面板高度由折行结果决定（见
+        // LyricsPanel.UpdateVerticalWrapLayout 里的实测逻辑）。
+        if (_isVertical && _isLyricsMode)
+        {
+            ApplyVerticalLyricsPanelWidth(logicalHeight);
+        }
+
         return (logicalWidth, logicalHeight);
+    }
+
+    /// <summary>
+    /// 把「折行宽度」写给竖向的歌词面板。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 只在数值真的变了才写：<c>CalculateSize</c> 由 1.5s 定时器、每次换歌、
+    /// 每次歌词换行驱动，无条件写 <c>Width</c> 会每轮触发一次布局遍。
+    /// </para>
+    /// <para>
+    /// 写入会连锁触发 <c>LyricsPanel.SizeChanged</c>，由面板自己重算折行高度，
+    /// 所以这里不需要再调用任何布局方法——**顺序是对的**：
+    /// <c>TaskbarWindow.PositionWidget</c> 先调 <c>SetVerticalMode</c>（此时面板
+    /// 宽度仍是 0，折行方法早退），再调 <c>CalculateSize</c>（这里写入宽度，
+    /// SizeChanged 补上那一次重算）。
+    /// </para>
+    /// </remarks>
+    private void ApplyVerticalLyricsPanelWidth(double crossDip)
+    {
+        if (!double.IsFinite(crossDip) || crossDip <= 0)
+        {
+            return;
+        }
+
+        if (double.IsFinite(_cachedLyricsPanelWidth)
+            && Math.Abs(_cachedLyricsPanelWidth - crossDip) < 0.01)
+        {
+            return;
+        }
+
+        _cachedLyricsPanelWidth = crossDip;
+        LyricsPanel.Width = crossDip;
     }
 
     /// <summary>

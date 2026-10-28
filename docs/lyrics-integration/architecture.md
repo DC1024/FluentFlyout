@@ -180,6 +180,37 @@ flowchart TD
 任务栏方位变了由 `TaskbarWindow` 调 `Widget.SetVerticalMode(isVertical)` 触发重排；
 混合 DPI 由 `TaskbarWindow.xaml.cs` / `MainWindow.xaml.cs` 里的 `WM_DPICHANGED` 处理。
 
+### 5.1 竖向折行宽度：装配链上唯一不会自愈的一环
+
+竖向下 `LyricsPanel.Width` **必须由宿主写入**，值取 `CalculateSize` 返回的 `logicalHeight`
+（40 / 28 DIP，与 `LyricsMetricsPolicy.DefaultTaskbarCrossSize` / `SmallTaskbarCrossSize` 同源）。
+
+这一条之所以要单独写，是因为**断了不会有任何报错，只会「一个字都看不见」**：
+
+```
+面板根是 HorizontalAlignment=Left 的 UserControl，内容全在 Canvas 里
+Canvas.MeasureOverride 恒返回 (0,0)
+  → 放在 Width="Auto" 的横向 StackPanel（MainStackPanel）里，排列宽度 = 内容期望宽度 = 0
+  → ActualWidth = 0 → ResolveVerticalViewport() = 0
+  → UpdateVerticalWrapLayout() 首行早退，Container 高度停在 XAML 的值、TextBlock.Width 仍是 NaN
+  → ClipToBounds=True 把文字整块剪掉
+  → SizeChanged 不会来救：尺寸从 0 到 0 不触发
+```
+
+也就是说，**没有任何环会把宽度补上**。曾经 `CalculateSize` 用 `&& !_isVertical` 跳过这次赋值、
+以为面板能从自身 `ActualWidth` 取到折行宽度，结果竖向任务栏整条路径静默失效
+（顶部/底部正常，左侧/右侧空白）。视觉验收矩阵没抓到，因为那套夹具直接给面板写了宽度，
+**绕过了生产路径的取宽度方式**——这也是「夹具通过 ≠ 真机通过」的一个具体案例。
+
+运行期判据：日志里出现 `Vertical lyrics: wrap viewport is 0` 就说明这条链断了。
+正常情况下它最多出现一次（首次布局前），随后被宿主写入宽度后的 `SizeChanged` 覆盖。
+
+这条链现在还有一层自动化护栏：`TaskbarVerticalLyricsWiringTests` 在 STA 线程上构造
+**真实的** `TaskbarWidgetControl`，按生产顺序（`SetLyricsMode` → `SetVerticalMode` →
+`CalculateSize`）走一遍，断言 `LyricsPanel.Width` 落在 40 / 28 DIP（小任务栏 28）。
+它盯的是「宽度有没有被写进去」，不是「排版好不好看」——后者仍归截图矩阵。
+把 `ApplyVerticalLyricsPanelWidth` 那行注释掉，4 个用例里 3 个立刻红，说明这条护栏是有效的。
+
 ---
 
 ## 6. 生命周期：泵跟服务走，不跟窗口走
