@@ -5,6 +5,7 @@
 
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 using FluentFlyout.Controls;
 using FluentFlyout.Lyrics.Models;
@@ -14,15 +15,19 @@ namespace FluentFlyout.Lyrics.Tests;
 
 /// <summary>
 /// 竖向任务栏歌词的**装配链**测试：走生产的 <c>CalculateSize</c>，
-/// 而不是像截图矩阵那样由夹具直接把宽度写进面板。
+/// 而不是像截图矩阵那样由夹具直接把尺寸写进面板。
 ///
+/// <para>
 /// 为什么必须有这一层：竖向下「一个字都不显示」的缺陷（面板宽度恒为 0、
 /// 文字被 <c>ClipToBounds</c> 剪光）在 72 张截图矩阵里**全绿**——因为那套
 /// 夹具自己给面板写了宽度，绕过了生产路径里唯一真正取宽度的地方。
 /// 夹具通过 ≠ 生产路径正确，这一课值得用一个测试长期钉住。
+/// </para>
 ///
-/// 断言都落在公开可见的状态上（<see cref="FrameworkElement.Width"/>），
-/// 不碰 internal：面板宽度就是那条断掉后再也补不回来的链环。
+/// <para>
+/// 断言都落在公开可见的状态上（<see cref="FrameworkElement.Width"/>、
+/// 字形块本身），不碰 internal。
+/// </para>
 /// </summary>
 public sealed class TaskbarVerticalLyricsWiringTests
 {
@@ -34,45 +39,45 @@ public sealed class TaskbarVerticalLyricsWiringTests
 
     /// <summary>
     /// 小组件内容区相对短边的内缩（DIP）：<c>TopBorder</c> 上边框 1.25 +
-    /// 下外边距 1.25。折行宽度必须是「可用短边」= 短边 − 内缩，
-    /// 与 <c>TaskbarWidgetControl.WidgetCrossInset</c> 同源。
+    /// 下外边距 1.25。可用短边 = 短边 − 内缩，与
+    /// <c>TaskbarWidgetControl.WidgetCrossInset</c> 同源。
     /// </summary>
     private const double CrossInset = 2.5;
 
     [Fact]
-    public void VerticalLyricsModeWritesWrapWidthIntoPanel()
+    public void VerticalLyricsModeWritesAvailableCrossSizeIntoPanelHeight()
     {
-        var width = RunOnStaThread(() =>
+        var cross = RunOnStaThread(() =>
         {
             var (control, panel) = CreateVerticalLyricsControl();
 
             control.CalculateSize(dpiScale: 1.0, availableWidth: 800);
 
-            return panel.Width;
+            return panel.Height;
         });
 
-        Assert.False(double.IsNaN(width), "竖向歌词模式下 LyricsPanel.Width 不能被留成 NaN：宽度为 Auto 时" +
-                                          "面板的排列宽度是内容期望宽度 0，文字会被 ClipToBounds 整块剪掉。");
+        Assert.False(double.IsNaN(cross), "竖向歌词模式下 LyricsPanel.Height 不能被留成 NaN：竖排的列数与列距" +
+                                          "都由短边决定，读不到短边就只能排一列。");
 
-        // 期望值是「可用短边」而不是短边本身：按 40 写会让每行文本比视口宽
-        // 2.5 DIP，右边缘被切掉一条（不报错、不裁整行，肉眼几乎判不出来）。
-        Assert.Equal(DefaultCrossSize - CrossInset, width, precision: 3);
+        // 期望值是「可用短边」而不是短边本身：TopBorder 吃掉 2.5 DIP，
+        // 按 40 写会让两列挤进 40 而边缘被切掉一条。
+        Assert.Equal(DefaultCrossSize - CrossInset, cross, precision: 3);
     }
 
     [Fact]
     public void SmallTaskbarUsesSmallCrossSize()
     {
-        var width = RunOnStaThread(() =>
+        var cross = RunOnStaThread(() =>
         {
             var (control, panel) = CreateVerticalLyricsControl();
             control.SetSmallTaskbarMode(true);
 
             control.CalculateSize(dpiScale: 1.0, availableWidth: 800);
 
-            return panel.Width;
+            return panel.Height;
         });
 
-        Assert.Equal(SmallCrossSize - CrossInset, width, precision: 3);
+        Assert.Equal(SmallCrossSize - CrossInset, cross, precision: 3);
     }
 
     [Fact]
@@ -83,9 +88,8 @@ public sealed class TaskbarVerticalLyricsWiringTests
             var (control, panel) = CreateVerticalLyricsControl();
             control.CalculateSize(dpiScale: 1.0, availableWidth: 800);
 
-            // 竖向写成「37.5 宽 + 主轴长的高」之后切回横向：两个尺寸都必须回到
-            // Auto，否则横向第一帧会按 37.5 折行（长句被切），或按竖向的高度
-            // 留一条空白。
+            // 竖向写成「主轴长度宽 + 37.5 高」之后切回横向：两个尺寸都必须回到
+            // Auto，否则横向第一帧会按竖向的主轴长度留一条长空白。
             control.SetVerticalMode(false);
             var afterSwitchBack = (panel.Width, panel.Height);
 
@@ -101,18 +105,17 @@ public sealed class TaskbarVerticalLyricsWiringTests
             $"{heightAfterSwitchBack.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)}。");
 
         // 横向分支自己会重写一个有限宽度（值取决于内容预算，这里不断言具体数值，
-        // 只要求「不是竖向留下的那个、也不是 NaN」）。
+        // 只要求「不是 NaN」）。
         Assert.False(double.IsNaN(widthAfterHorizontalLayout), "横向 CalculateSize 之后宽度应被重新写入。");
-        Assert.NotEqual(DefaultCrossSize - CrossInset, widthAfterHorizontalLayout);
     }
 
     [Fact]
-    public void WrapWidthEqualsAvailableCrossSize()
+    public void CrossSizeEqualsAvailableCrossFromLayout()
     {
-        // 折行宽度不是控件高度本身：TopBorder 的上边框与下外边距吃掉 2.5 DIP，
+        // 可用短边不是控件高度本身：TopBorder 的上边框与下外边距吃掉 2.5 DIP，
         // 40 的高度只剩 37.5 给内容。这条测试用**真实布局量出的可用短边**校验
         // 宿主的常量，XAML 里改边框/外边距而忘了改常量时会红。
-        var (writtenWidth, availableFromLayout) = RunOnStaThread(() =>
+        var (writtenCross, availableFromLayout) = RunOnStaThread(() =>
         {
             var (control, _) = CreateVerticalLyricsControl();
 
@@ -129,10 +132,154 @@ public sealed class TaskbarVerticalLyricsWiringTests
 
             control.CalculateSize(dpiScale: 1.0, availableWidth: 800);
             var panel = (FrameworkElement)control.FindName("LyricsPanel");
-            return (panel.Width, available);
+            return (panel.Height, available);
         });
 
-        Assert.Equal(availableFromLayout, writtenWidth, precision: 3);
+        Assert.Equal(availableFromLayout, writtenCross, precision: 3);
+    }
+
+    [Fact]
+    public void ChineseLineIsOneColumnOfCounterRotatedGlyphs()
+    {
+        // 竖排的核心机制，一条断言钉两面：
+        //   1. 每个汉字一格、互不重叠（主轴步进 ≈ 字号）；
+        //   2. **每个汉字都挂了 -90 的反向旋转**——少这一下，屏幕上就是
+        //      「字全躺倒」，而墨迹总量、内容长度全都正常，肉眼之外的
+        //      所有指标都不会红。
+        const string Line = "被爱的深夜我在想念";
+
+        var (glyphCount, allCounterRotated, step, length) = RunOnStaThread(() =>
+        {
+            var (control, panel) = CreateVerticalLyricsControl();
+            var blocks = LayOutLine(control, panel, Line);
+
+            var steps = new List<double>();
+            var canvas = (Canvas)panel.FindName("VerticalContainer");
+            for (var i = 1; i < blocks.Count; i++)
+            {
+                steps.Add(Canvas.GetLeft(blocks[i]) - Canvas.GetLeft(blocks[i - 1]));
+            }
+
+            return (
+                blocks.Count,
+                blocks.All(b => b.RenderTransform is RotateTransform { Angle: -90 }),
+                steps.Count > 0 ? steps.Max() - steps.Min() : 0,
+                (double)panel.VerticalContentLength);
+        });
+
+        Assert.Equal(Line.Length, glyphCount);
+        Assert.True(allCounterRotated, "每个汉字都必须绕自身中心反向旋转 90°，否则竖排文字会躺倒。");
+
+        // 步进一致：差值应当远小于一个字宽（13 DIP）。
+        Assert.True(step < 1.0, $"汉字步进不一致，最大差 {step:F2} DIP——不同宽度会排成锯齿。");
+
+        // 整句一列到底：长度 ≈ 字数 × 字号，而不是「两字一折」。
+        Assert.InRange(length, Line.Length * 12.0, Line.Length * 14.5);
+    }
+
+    [Fact]
+    public void LatinWordsStaySidewaysAndAreNeverSplit()
+    {
+        // 英文必须整词侧躺（歪头读），不能逐字母正立堆成竖塔。
+        // 真机缺陷「My / scree / n is / glowi / ng like a / midni」就是
+        // 词被拆开的下场——这里断言每个单词都是一整格。
+        const string Line = "My screen is glowing like a midnight sea";
+
+        var (joined, screenIsWhole, allUprightAreChinese) = RunOnStaThread(() =>
+        {
+            var (control, panel) = CreateVerticalLyricsControl();
+            var blocks = LayOutLine(control, panel, Line);
+
+            return (
+                string.Concat(blocks.Select(b => b.Text)),
+                blocks.Any(b => b.Text == "screen"),
+                blocks.All(b => b.RenderTransform is not RotateTransform || IsCjk(b.Text)));
+        });
+
+        Assert.Equal(Line, joined);
+        Assert.True(screenIsWhole, "英文单词被拆开了：竖排里一个词必须是一格。");
+        Assert.True(allUprightAreChinese, "只有方块字该反向旋转，拉丁词必须整体侧躺。");
+    }
+
+    [Fact]
+    public void MixedLineKeepsChineseUprightAndLatinWordsWhole()
+    {
+        // 中英混排是最容易出岔子的一档：一列里既有要反旋的方块字，
+        // 又有必须整词侧躺的拉丁词。**按整列统一处理**（要么全转、要么全不转）
+        // 在纯中文与纯英文的用例上都看不出问题，只有混排会暴露：
+        //   · 全转 → 英文侧躺的字被转成正立，歪头看不成了
+        //   · 全不转 → 汉字躺倒，整句没法读
+        // 所以这条用例专门钉住「逐格判定」。
+        const string Line = "We were dancing in the rain 直到天亮";
+
+        var (joined, chineseUpright, latinSideways, dancingIsWhole) = RunOnStaThread(() =>
+        {
+            var (control, panel) = CreateVerticalLyricsControl();
+            var blocks = LayOutLine(control, panel, Line);
+
+            var chinese = blocks.Where(b => IsCjk(b.Text)).ToList();
+            var latin = blocks.Where(b => !IsCjk(b.Text)).ToList();
+
+            return (
+                string.Concat(blocks.Select(b => b.Text)),
+                chinese.Count > 0 && chinese.All(b => b.RenderTransform is RotateTransform { Angle: -90 }),
+                latin.Count > 0 && latin.All(b => b.RenderTransform is not RotateTransform),
+                blocks.Any(b => b.Text == "dancing"));
+        });
+
+        Assert.Equal(Line, joined);
+        Assert.True(chineseUpright, "混排里的汉字必须反旋为正立，否则整列躺倒。");
+        Assert.True(latinSideways, "混排里的拉丁词必须保持侧躺，否则歪头读的词被转正。");
+        Assert.True(dancingIsWhole, "混排里的英文单词不能被拆成字母。");
+    }
+
+    [Fact]
+    public void TranslationGetsItsOwnColumnWhenItFits()
+    {
+        // 短边 37.5、字号 13：两列 2 × 1.33 × 13 = 34.6 ≤ 37.5，放得下。
+        // 两列的判据是「短边方向的起点不同」——主列在小的 y 一侧（屏幕右侧），
+        // 译文列在大的 y 一侧，与中文竖排「先读右列」一致。
+        var (columnTops, secondaryCount, primaryCount) = RunOnStaThread(() =>
+        {
+            var (control, panel) = CreateVerticalLyricsControl();
+            var blocks = LayOutLine(control, panel, "被爱的深夜我在想念", "I miss you in the late night");
+
+            var tops = blocks
+                .Select(b => Math.Round(Canvas.GetTop(b), 2))
+                .Distinct()
+                .OrderBy(t => t)
+                .ToList();
+
+            var primaryFontSize = panel.Metrics.FontSize;
+            return (
+                tops,
+                blocks.Count(b => Math.Abs(b.FontSize - primaryFontSize) > 0.01),
+                blocks.Count(b => Math.Abs(b.FontSize - primaryFontSize) <= 0.01));
+        });
+
+        Assert.Equal(2, columnTops.Count);
+        Assert.True(primaryCount > 0 && secondaryCount > 0, "两列都该有字形块。");
+    }
+
+    [Fact]
+    public void TranslationIsDroppedWhenTwoColumnsDoNotFit()
+    {
+        // 小任务栏：短边 25.5 < 34.6，两列硬挤会把两列都压扁。
+        // 取舍是「留主列」——译文是辅助，当前歌词才是主体。
+        var (columnCount, hasSecondaryFont) = RunOnStaThread(() =>
+        {
+            var (control, panel) = CreateVerticalLyricsControl();
+            control.SetSmallTaskbarMode(true);
+
+            var blocks = LayOutLine(control, panel, "被爱的深夜我在想念", "I miss you in the late night");
+
+            return (
+                blocks.Select(b => Math.Round(Canvas.GetTop(b), 2)).Distinct().Count(),
+                blocks.Any(b => b.FontSize < panel.Metrics.FontSize - 0.01));
+        });
+
+        Assert.Equal(1, columnCount);
+        Assert.False(hasSecondaryFont, "短边装不下两列时不该再排出译文列。");
     }
 
     [Fact]
@@ -141,50 +288,25 @@ public sealed class TaskbarVerticalLyricsWiringTests
         // 真机缺陷（左侧竖排任务栏）：9 个字的「被爱的深夜我在想念」只显示
         // 「被爱的 / 深夜我」——每列 3 字、上限 6 字，第 7 个字往后静默消失。
         //
-        // 成因：面板挂在横向 MainStackPanel 里，交叉轴约束映射到面板的**宽度**
-        // （折行宽度），映射不到高度；而面板高度撑不起来（内容在 Canvas 里，
-        // Canvas 的期望尺寸恒为 0）。于是折行结果只写进了 Canvas 高度，
-        // 传导不到面板自身，被 ClipToBounds 剪掉。
-        //
-        // 因此这里断言的不是「宽度写对了」，而是「面板沿主轴的长度撑到了
-        // 内容的真实高度」，并且「小组件比 StackPanel 要的更宽」。
+        // 逐字竖排下这条链变成「面板 Width = 内容长度」，所以断言分两层：
+        // 面板沿主轴的长度覆盖内容（不被 ClipToBounds 剪），
+        // 且小组件比 StackPanel 要的更宽（不被 MainBorder 剪）。
         const string LongLine = "如果这场雨一直下到明天清晨我们是不是就能一直站在这里不分开";
 
-        var (panelHeight, contentHeight, stackWidth, widgetWidth) = RunOnStaThread(() =>
+        var (panelWidth, contentLength, stackWidth, widgetWidth) = RunOnStaThread(() =>
         {
-            var (control, _) = CreateVerticalLyricsControl();
+            var (control, panel) = CreateVerticalLyricsControl();
+            LayOutLine(control, panel, LongLine);
 
-            var host = new Canvas { Width = 48, Height = 1440 };
-            host.Children.Add(control);
-
-            // 先排一遍：让控件的字体/样式落定，否则第一次量到的行高来自
-            // 应用默认字体，会比真实字体少一行。
-            control.Width = 240;
-            control.Height = DefaultCrossSize;
-            control.Measure(new Size(240, DefaultCrossSize));
-            control.Arrange(new Rect(0, 0, 240, DefaultCrossSize));
-            control.UpdateLayout();
-
-            control.ApplyLyricDocument(new[] { new LyricLine(TimeSpan.Zero, LongLine) });
-            control.UpdateLyricsFrame(new LyricDisplayFrame(LongLine, string.Empty, "标题", 0.3));
-
-            var (logicalWidth, logicalHeight) = control.CalculateSize(dpiScale: 1.0, availableWidth: 800);
-            control.Width = logicalWidth;
-            control.Height = logicalHeight;
-            control.Measure(new Size(logicalWidth, logicalHeight));
-            control.Arrange(new Rect(0, 0, logicalWidth, logicalHeight));
-            control.UpdateLayout();
-
-            var panel = (FrameworkElement)control.FindName("LyricsPanel");
-            var lyricsPanel = (LyricsPanel)panel;
             var stack = (FrameworkElement)control.FindName("MainStackPanel");
-
-            return (panel.Height, lyricsPanel.VerticalContentHeight, stack.ActualWidth, control.ActualWidth);
+            return (panel.Width, panel.VerticalContentLength, stack.ActualWidth, control.ActualWidth);
         });
 
-        Assert.InRange(contentHeight, 60, 2000);
-        Assert.True(panelHeight >= contentHeight - 0.5,
-            $"竖向歌词面板沿主轴只拿到 {panelHeight:F1} DIP，内容需要 {contentHeight:F1} DIP——" +
+        // 28 个字一列到底，长度远大于「两字一折」时代的 37.5。
+        Assert.InRange(contentLength, 300, 480);
+
+        Assert.True(panelWidth >= contentLength - 0.5,
+            $"竖向歌词面板沿主轴只拿到 {panelWidth:F1} DIP，内容需要 {contentLength:F1} DIP——" +
             "差额会被 ClipToBounds 吃掉，屏幕上表现为「句子没写完」。");
 
         Assert.True(stackWidth <= widgetWidth + 0.5,
@@ -193,82 +315,79 @@ public sealed class TaskbarVerticalLyricsWiringTests
     }
 
     [Fact]
-    public void EnglishLineWithWordsWiderThanTheColumnIsNotClipped()
-    {
-        // 真机缺陷（左侧竖排任务栏 + 英文歌词）：屏幕上是
-        // 「My / scree / n is / glowi / ng like a / midni」——句子在半个词上断掉，
-        // 后面的「ght sea」整段消失，而且没有省略号。
-        //
-        // 成因不在宿主：竖向折行宽度只有 37.5 DIP，英文单词几乎全部比它宽。
-        // 旧实现用 FormattedText 量折行高度，而 FormattedText **不切词**
-        // （超宽词照样算一行、允许溢出），TextBlock 的 TextWrapping.Wrap **会切词**。
-        // 同一段 40 字符的文本：FormattedText 量出 7 行（121.03 DIP），
-        // TextBlock 实际排 9 行（155.61 DIP）——Canvas 矮两行，尾巴被剪。
-        //
-        // 所以断言必须落在「容器高度 ≥ 文本真实高度」上，而不是「高度是个正数」：
-        // 前者才会在两种断行策略分叉时变红。
-        const string Line = "My screen is glowing like a midnight sea";
-
-        var (containerHeight, textHeight, panelHeight, contentHeight) = RunOnStaThread(() =>
-        {
-            var (control, _) = CreateVerticalLyricsControl();
-
-            var host = new Canvas { Width = 48, Height = 1440 };
-            host.Children.Add(control);
-
-            control.Width = 240;
-            control.Height = DefaultCrossSize;
-            control.Measure(new Size(240, DefaultCrossSize));
-            control.Arrange(new Rect(0, 0, 240, DefaultCrossSize));
-            control.UpdateLayout();
-
-            control.ApplyLyricDocument(new[] { new LyricLine(TimeSpan.Zero, Line) });
-            control.UpdateLyricsFrame(new LyricDisplayFrame(Line, "屏幕荧光闪烁，如深夜的海洋", "标题", 0.3));
-
-            var (logicalWidth, logicalHeight) = control.CalculateSize(dpiScale: 1.0, availableWidth: 1440);
-            control.Width = logicalWidth;
-            control.Height = logicalHeight;
-            control.Measure(new Size(logicalWidth, logicalHeight));
-            control.Arrange(new Rect(0, 0, logicalWidth, logicalHeight));
-            control.UpdateLayout();
-
-            var panel = (LyricsPanel)control.FindName("LyricsPanel");
-            var container = (Canvas)panel.FindName("PrimaryContainer");
-            var text = (TextBlock)panel.FindName("PrimaryText");
-
-            return (container.Height, text.ActualHeight, panel.Height, panel.VerticalContentHeight);
-        });
-
-        Assert.True(containerHeight >= textHeight - 0.5,
-            $"主行容器高 {containerHeight:F1} DIP，文本实际排了 {textHeight:F1} DIP——" +
-            $"差 {(textHeight - containerHeight):F1} DIP 会被 ClipToBounds 剪掉，" +
-            "屏幕上表现为「英文句子在半个词上断掉」（量折行高度时用了不切词的 FormattedText）。");
-
-        Assert.True(panelHeight >= contentHeight - 0.5,
-            $"面板高 {panelHeight:F1} DIP，内容要 {contentHeight:F1} DIP——宿主没拿到真实折行高度。");
-    }
-
-    [Fact]
-    public void RepeatedLayoutKeepsWidthStable()
+    public void RepeatedLayoutKeepsSizeStable()
     {
         // CalculateSize 被 1.5s 定时器、换歌、每次歌词换行反复调用。
-        // 重复调用必须幂等：宽度不变（写入有值比较，不会每轮触发布局遍）。
-        var widths = RunOnStaThread(() =>
+        // 重复调用必须幂等：尺寸不变（写入有值比较，不会每轮触发布局遍）。
+        var (heights, widths) = RunOnStaThread(() =>
         {
             var (control, panel) = CreateVerticalLyricsControl();
+            LayOutLine(control, panel, "被爱的深夜我在想念");
 
-            var samples = new double[3];
-            for (var i = 0; i < samples.Length; i++)
+            var h = new double[3];
+            var w = new double[3];
+            for (var i = 0; i < h.Length; i++)
             {
                 control.CalculateSize(dpiScale: 1.0, availableWidth: 800);
-                samples[i] = panel.Width;
+                h[i] = panel.Height;
+                w[i] = panel.Width;
             }
 
-            return samples;
+            return (h, w);
         });
 
-        Assert.All(widths, w => Assert.Equal(DefaultCrossSize - CrossInset, w, precision: 3));
+        Assert.All(heights, v => Assert.Equal(DefaultCrossSize - CrossInset, v, precision: 3));
+        Assert.All(widths, v => Assert.Equal(widths[0], v, precision: 3));
+        Assert.True(widths[0] > DefaultCrossSize, "主轴长度应当由内容决定，远大于短边。");
     }
+
+    /// <summary>
+    /// 把一句歌词送进控件并返回竖排建出来的字形块（按主轴顺序）。
+    /// </summary>
+    /// <remarks>
+    /// 顺序必须与生产一致：先排一遍让字体落定 → 给文档 → 给帧 →
+    /// <c>CalculateSize</c>（宿主在这里写短边并读长度）→ 再排一遍。
+    /// 少了第一次布局，量到的字号来自应用默认字体。
+    /// </remarks>
+    private static List<TextBlock> LayOutLine(
+        TaskbarWidgetControl control,
+        FrameworkElement panel,
+        string line,
+        string? translation = null)
+    {
+        var host = new Canvas { Width = 48, Height = 1440 };
+        host.Children.Add(control);
+
+        control.Width = 240;
+        control.Height = DefaultCrossSize;
+        control.Measure(new Size(240, DefaultCrossSize));
+        control.Arrange(new Rect(0, 0, 240, DefaultCrossSize));
+        control.UpdateLayout();
+
+        control.ApplyLyricDocument(new[] { new LyricLine(TimeSpan.Zero, line) });
+        control.UpdateLyricsFrame(new LyricDisplayFrame(
+            line,
+            string.Empty,
+            "标题",
+            0.3,
+            CurrentTranslation: translation));
+
+        var (logicalWidth, logicalHeight) = control.CalculateSize(dpiScale: 1.0, availableWidth: 800);
+        control.Width = logicalWidth;
+        control.Height = logicalHeight;
+        control.Measure(new Size(logicalWidth, logicalHeight));
+        control.Arrange(new Rect(0, 0, logicalWidth, logicalHeight));
+        control.UpdateLayout();
+
+        var canvas = (Canvas)panel.FindName("VerticalContainer");
+        return canvas.Children
+            .OfType<TextBlock>()
+            .OrderBy(Canvas.GetLeft)
+            .ToList();
+    }
+
+    private static bool IsCjk(string text) =>
+        text.Length > 0 && text.Any(c => c >= '\u3000' && c <= '\u9FFF');
 
     /// <summary>
     /// 造一个「竖向 + 歌词模式」的控件。
@@ -277,13 +396,13 @@ public sealed class TaskbarVerticalLyricsWiringTests
     /// 顺序刻意与生产一致：<c>SetLyricsMode</c> → <c>SetVerticalMode</c> → <c>CalculateSize</c>
     /// （<c>TaskbarWindow.PositionWidget</c> 就是先切方向、再问尺寸）。
     /// </remarks>
-    private static (TaskbarWidgetControl Control, FrameworkElement Panel) CreateVerticalLyricsControl()
+    private static (TaskbarWidgetControl Control, LyricsPanel Panel) CreateVerticalLyricsControl()
     {
         var control = new TaskbarWidgetControl();
         control.SetLyricsMode(true);
         control.SetVerticalMode(true);
 
-        var panel = control.FindName("LyricsPanel") as FrameworkElement;
+        var panel = control.FindName("LyricsPanel") as LyricsPanel;
         Assert.NotNull(panel);
 
         return (control, panel);
@@ -317,7 +436,7 @@ public sealed class TaskbarVerticalLyricsWiringTests
 /// <c>TaskbarWidgetControl.xaml</c> 里有一处
 /// <c>Style="{StaticResource UiContextMenu}"</c>，这个键来自 WPF-UI 的
 /// <c>ControlsDictionary</c>。测试里没有真实的 App.xaml，所以补一个等价的
-/// 最小 <see cref="ContextMenu"/> 样式——本测试只关心宽度数值，
+/// 最小 <see cref="ContextMenu"/> 样式——本测试只关心尺寸数值，
 /// 不关心右键菜单长什么样。
 /// </para>
 /// </remarks>

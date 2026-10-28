@@ -10,49 +10,72 @@
              ClipToBounds="True">
 
     <!--
-        两行结构刻意用 Grid + 两个固定高度行，而不是 StackPanel：
-        StackPanel 在高度不够时会把子项压扁，Grid 则是直接裁掉，
-        后者更符合「宁可少一行也不要把字压变形」的期望。
+        PanelRoot 只是给「横向两行」与「竖向逐字」两套内容一个共同的父级：
+        UserControl 只能有一个 Content，而这两者要能整体互斥切换
+        （见 LyricsPanel.SetVerticalMode）。
 
-        每一行是 Canvas + TextBlock 的组合，与现有 SongTitle/SongArtist
-        保持同一手法（Canvas 做裁剪视口、TextBlock 挂 TranslateTransform），
-        这样长句滚动可以复用同一套动画思路。
+        不把竖排画布塞进 RootGrid 里：RootGrid 的两行是 Auto + 固定行高，
+        行高之和恒为「两行歌词」，RowSpan 的子项拿不到面板的真实高度，
+        画布会被压成一条缝。
     -->
-    <Grid x:Name="RootGrid">
-        <Grid.RowDefinitions>
-            <RowDefinition x:Name="PrimaryRow" Height="Auto" />
-            <RowDefinition x:Name="SecondaryRow" Height="0" />
-        </Grid.RowDefinitions>
+    <Grid x:Name="PanelRoot">
 
-        <!-- 当前行 -->
-        <Canvas x:Name="PrimaryContainer" Grid.Row="0" ClipToBounds="True" Height="19">
-            <TextBlock x:Name="PrimaryText" Text="" FontWeight="Medium">
-                <TextBlock.RenderTransform>
-                    <TranslateTransform />
-                </TextBlock.RenderTransform>
-            </TextBlock>
+        <!--
+            两行结构刻意用 Grid + 两个固定高度行，而不是 StackPanel：
+            StackPanel 在高度不够时会把子项压扁，Grid 则是直接裁掉，
+            后者更符合「宁可少一行也不要把字压变形」的期望。
 
-            <!--
-                逐字扫描的覆盖层：与 PrimaryText 完全重叠，
-                靠 OpacityMask 的渐变位置控制「已唱到哪」。
-                初始 Collapsed，只有帧里带 WordScanProgress 时才显示。
-            -->
-            <TextBlock x:Name="PrimaryScanText" Text="" FontWeight="Medium"
-                       IsHitTestVisible="False" Visibility="Collapsed">
-                <TextBlock.RenderTransform>
-                    <TranslateTransform />
-                </TextBlock.RenderTransform>
-            </TextBlock>
-        </Canvas>
+            每一行是 Canvas + TextBlock 的组合，与现有 SongTitle/SongArtist
+            保持同一手法（Canvas 做裁剪视口、TextBlock 挂 TranslateTransform），
+            这样长句滚动可以复用同一套动画思路。
 
-        <!-- 次要行：翻译行，或（无翻译时）下一行预览 -->
-        <Canvas x:Name="SecondaryContainer" Grid.Row="1" ClipToBounds="True" Height="19"
-                Visibility="Collapsed">
-            <TextBlock x:Name="SecondaryText" Text="" FontWeight="Normal" Opacity="0.7">
-                <TextBlock.RenderTransform>
-                    <TranslateTransform />
-                </TextBlock.RenderTransform>
-            </TextBlock>
-        </Canvas>
+            竖向任务栏下整块 Collapsed：竖排改由 VerticalContainer 逐字排，
+            这两行的 TextBlock 退化成「文本与配色的单一数据源」——
+            上面的 Text / Foreground / Opacity 仍然是唯一真相，
+            竖排只是照着它建一棵字形树。
+        -->
+        <Grid x:Name="RootGrid">
+            <Grid.RowDefinitions>
+                <RowDefinition x:Name="PrimaryRow" Height="Auto" />
+                <RowDefinition x:Name="SecondaryRow" Height="0" />
+            </Grid.RowDefinitions>
+
+            <!-- 当前行 -->
+            <Canvas x:Name="PrimaryContainer" Grid.Row="0" ClipToBounds="True" Height="19">
+                <TextBlock x:Name="PrimaryText" Text="" FontWeight="Medium">
+                    <TextBlock.RenderTransform>
+                        <TranslateTransform />
+                    </TextBlock.RenderTransform>
+                </TextBlock>
+
+                <!--
+                    逐字扫描的覆盖层：与 PrimaryText 完全重叠，
+                    靠 OpacityMask 的渐变位置控制「已唱到哪」。
+                    初始 Collapsed，只有帧里带 WordScanProgress 时才显示。
+                -->
+                <TextBlock x:Name="PrimaryScanText" Text="" FontWeight="Medium"
+                           IsHitTestVisible="False" Visibility="Collapsed">
+                    <TextBlock.RenderTransform>
+                        <TranslateTransform />
+                    </TextBlock.RenderTransform>
+                </TextBlock>
+            </Canvas>
+
+            <!-- 次要行：翻译行，或（无翻译时）下一行预览 -->
+            <Canvas x:Name="SecondaryContainer" Grid.Row="1" ClipToBounds="True" Height="19"
+                    Visibility="Collapsed">
+                <TextBlock x:Name="SecondaryText" Text="" FontWeight="Normal" Opacity="0.7">
+                    <TextBlock.RenderTransform>
+                        <TranslateTransform />
+                    </TextBlock.RenderTransform>
+                </TextBlock>
+            </Canvas>
+        </Grid>
+
+        <!--
+            竖排画布：每个「排版格」一个 TextBlock，由 LyricsPanel.Vertical.cs
+            在代码里建树。横向时 Collapsed（不测量、不绘制）。
+        -->
+        <Canvas x:Name="VerticalContainer" ClipToBounds="True" Visibility="Collapsed" />
     </Grid>
 </UserControl>

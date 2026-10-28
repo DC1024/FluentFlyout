@@ -347,66 +347,61 @@ panel 用 `RenderTransform(-90)` 后，父级仍按 `185×40` 给它排版，
 任务栏短边。不能传 `double.PositiveInfinity`：`LyricsPanelMetrics.Create` 的
 合法性检查会把无穷当成脏数据回落成 40，效果与不传一样。
 
-### 4.7 主轴长度估算
+注意这条只管**行数与字号**。逐字竖排下「两行」落到屏幕上是**两列**，
+而列数另有硬约束：两列要 `2 × 1.33 × 字号`（字号 13 时 34.6 DIP），短边装不下
+就丢掉译文列、保住主列（见 `LyricsPanel.BuildVerticalTree`）。所以 28 DIP 竖向
+确实只剩一列——但字号不会被压到 10，这跟横向「压成单行」是两回事。
 
-竖向下「想要多宽」这个问题的答案是「想要多长」：一句歌词必然折成多行，
-需要的主轴长度 = 行数 × 行高。估算在 `LyricsVerticalLayout.EstimateMainAxisLength`：
+### 4.7 主轴长度：由面板实测上报，不做除法估算
 
-```
-primaryRows   = ceil(primaryWidth / (crossSize - WrapSafetyMargin))
-secondaryRows = ceil(secondaryWidth / (crossSize - WrapSafetyMargin))   // 有次要行时
-length = min(primaryRows * primaryLineHeight
-           + gap + secondaryRows * secondaryLineHeight, maxLength)
-```
+> **这一节在逐字竖排方案里被整体推翻过一次。** 原文（「折行后行数 × 行高」的估算）
+> 留在 git 历史里，这里只记结论与理由。
 
-四个容易写错的点，都在单测里锁了：
+结论先说：**竖向长度不是估出来的，是排出来的。**
 
-1. **向上取整**。差 0.1 像素也要算一行，否则最后几个字被切掉。
-2. **不夹 `MinimumLength`**。一句短歌词折成两行约 30 DIP，硬夹到 64 会让小组件
-   白占空间、主轴上留一条空白。下限只用于「输入不可用」的兜底路径。
-3. **两行必须相加，不能取较大者**。当前行与翻译/下一行是**各自独立折行**的：
-   各折 2 行就是 4 行。早期实现只算主行，截图矩阵实测双行状态估 29.9 DIP、
-   实际要 63.4 DIP，次要行被 `ClipToBounds` 整行裁掉。
-4. **行高必须用实测值**。`LyricsPanelMetrics.LineHeight` 是「字号 × 1.15」的
-   名义值（13px → 14.95），而 `FormattedText.Height` 实际是 16.51，差 10%。
-   每行少算 1.5 DIP，五行就少 7.5 DIP。所以 `LyricsVerticalContent` 里的行高
-   一律来自 `FormattedText` 实测，不接受名义值。
+旧方案里竖排是「抵消旋转 + 折行」：面板宽 = 短边，一句歌词折成若干行，
+主轴长度 = 行数 × 行高，而行数能用 `ceil(文本宽 / 可用宽)` 推出来，所以估算可行。
+但它绕不开一个容量问题：37.5 DIP 的可用宽度里，13px 汉字一行只站得下 **2 个**——
+28 个字的句子要 14 行、560 DIP，比半个任务栏还长。
 
-#### 4.7.1 禁则偏差交给实测，不在估算里猜
+现在的竖排是**逐字排**：一列沿主轴排下去，每格一个字，拉丁词整词侧躺占一格。于是：
 
-中文排版有禁则处理（标点不能出现在行首），实际折行会比纯宽度除法**多约一行**。
-这个偏差**刻意不修在估算里**：
+- 主轴长度 = Σ(每格实测步进)，是**排版的直接结果**，中间没有「行数」这个量；
+- 每格步进由字体决定（汉字 1em、空格 0.33em、标点各有宽度、拉丁词是整词宽度），
+  宽度除法推不出来——一律按字号算会让空格变成大豁口、让拉丁词尾部被裁；
+- 一列能装 44 个汉字（578 ÷ 13），整句几乎总能一列到底，不再需要折行。
 
-- 它取决于标点出现在哪、每行放几个字，是**文本内容的函数**，不是宽度的函数；
-  `LyricsVerticalLayout` 是纯算术层，拿不到文本；
-- 硬塞「每行减一个字」的系数会在短句上凭空多算一行（实测 `single` 状态
-  从 33.0 涨到 49.5，白占一行高度），而在长句上又可能仍然不够——
-  本段先后试过固定乘 0.92、按字符数折算两种写法，两次都在短句上翻车。
-
-正确的分工是**估算给下限、实测兜上限**：
+所以 `LyricsPanel.VerticalContentLength` 直接返回**建树时累加的那个数**，
+`TaskbarWidgetControl` 拿它当主轴长度用：
 
 ```csharp
 // TaskbarWidgetControl.MeasureDesiredWidth，竖向分支
-var estimate = LyricsVerticalLayout.EstimateMainAxisLength(...);
-var measured = LyricsPanel.VerticalContentHeight;   // RootGrid.ActualHeight
-return measured > estimate ? Math.Min(measured, MaxLyricsWidgetLength) : estimate;
+ApplyVerticalLyricsPanelCross(ResolveVerticalCrossSize(crossSize));  // 先写短边
+var contentLength = LyricsPanel.VerticalContentLength;               // 再读长度
+if (contentLength <= 0)
+{
+    contentLength = TaskbarFreeSpaceLayout.MinimumDisplayLength;     // 首帧兜底
+}
+return Math.Min((contentLength + MeasureVerticalLeadIn()) * _scale, maxMainAxisLength);
 ```
 
-`LyricsPanel.VerticalContentHeight` 在竖向会先按实测折行结果写好两行 Canvas 的
-高度，再返回 `RootGrid.ActualHeight`——这个值就是「TextBlock 到底折了几行」
-的权威答案。只取较大者、不做双向对齐：估算偏大是宿主主动申请的占位，
-缩回去会让任务栏留空白，且下一帧估算又撑起来，形成抖动。
+顺序不能反：**列数与列距都由短边决定**（两列要 2.66 × 字号）。短边还没写进去就去读长度，
+读到的是上一轮的列数——症状是「字号改大之后，歌词还是按旧字号排了一次」。
 
-截图矩阵实测（60 DIP 宽、13px 字号）：
+`LyricsVerticalLayout.EstimateMainAxisLength` 因此退出了竖向生产路径，目前只剩单测在用。
+保留它的理由有两条：`ResolveMaxMainAxisLength` 仍在按任务栏实际长度推上限；
+将来接「逐字滚动」时还需要一个「至少多长」的下界。
 
-| 状态 | 估算 | 实测 | 差 |
-|---|---|---|---|
-| single | 33.0 | 33.0 | 0 |
-| two-line | 63.4 | 63.4 | 0 |
-| translation | 79.9 | 79.9 | 0 |
-| long-line | 160.2 | **176.7** | **+16.5（禁则多一行）** |
+#### 4.7.1 禁则与折行偏差（已随折行方案一起退场）
 
-`long-line` 那 16.5 就是被实测兜住的一行——没有这条路径，末行「开」会被裁掉。
+旧方案为了避免「末行被裁」，专门讨论过中文禁则让实际折行多出约一行的偏差，
+并定下「估算给下限、实测兜上限」的分工。逐字竖排不再折行——一列到底，
+行首禁则无从谈起——这一整段随之失效。
+
+唯一继承下来的是**上限**那一步：主轴长度超过任务栏能给的预算时，
+超出的字形会被 `ClipToBounds` 吃掉，屏幕上表现为「句子没写完」。竖排不做
+逐字滚动是这一版的已知取舍，截图矩阵把这类长句标成 `IsLongLine`、只记录
+裁切量而不判失败，等接上滚动再收紧。
 
 ## 5. 小任务栏（28px）必须单行
 
@@ -561,14 +556,16 @@ PrimaryContainer / SecondaryContainer）一次就能定位到是哪一层没生�
 |---|---|---|
 | `K-horizontal-two-line.png` | 横向 · 双行 | 基准行为未变 |
 | `L-horizontal-long-line.png` | 横向 · 长句 | 长句不折行、走滚动 |
-| `M-vertical-single.png` | 竖向 · 单行 | 主行折行、无次要行 |
-| `N-vertical-two-line.png` | 竖向 · 双行 | **主行 + 下一行都完整** |
-| `O-vertical-translation.png` | 竖向 · 翻译行 | 翻译行字号更小、颜色更淡 |
-| `P-vertical-long-line.png` | 竖向 · 长句 | **末行不被裁**（禁则多一行） |
+| `M-vertical-single.png` | 竖向 · 单行 | 8 个字排成一列，字正立 |
+| `N-vertical-two-line.png` | 竖向 · 双行 | **两列**：右列主行、左列下一行 |
+| `O-vertical-translation.png` | 竖向 · 翻译行 | 译文列字号更小、颜色更淡 |
+| `P-vertical-long-line.png` | 竖向 · 长句 | 29 个字一列到底（377 DIP） |
 | `Q-vertical-dark-two-line.png` | 竖向 · 深色 | 深色主题对比度 |
 | `R-horizontal-200-word-scan.png` | 横向 · 200% · 逐字扫描 | 扫描遮罩位置与 DPI 无关 |
+| `S-vertical-mixed-latin.png` | 竖向 · 200% · 中英混排 | **拉丁词整词侧躺、汉字正立** |
 
-加粗的三项是本轮修掉的缺陷对应的回归样本——将来若有人动了
-`UpdateVerticalWrapLayout` 或估算公式，这三张会先变。
+竖排那六张（M/N/O/P/Q/S）是逐字竖排这一版的回归样本：将来若有人动了
+`LyricsPanel.Vertical.cs` 里的朝向判定或列布局，它们会先变。横向那三张
+（K/L/R）没有变——横向走的仍是原来的折行 + 滚动路径。
 
 
