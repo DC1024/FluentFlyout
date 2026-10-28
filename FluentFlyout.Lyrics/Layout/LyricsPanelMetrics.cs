@@ -37,6 +37,14 @@ public readonly record struct LyricsPanelMetrics
     /// <summary>翻译行相对当前行的字号比例。</summary>
     public const double TranslationFontScale = 0.86;
 
+    /// <summary>
+    /// 字号下限（DIP）。再小就看不清了，宁可让调用方知道装不下。
+    ///
+    /// 下限是「压到最后也不压了」的兜底，不是目标值：所有夹取路径最后都会
+    /// 经过它，所以它必须在 <see cref="Create"/> 里只出现一次。
+    /// </summary>
+    public const double MinimumFontSize = 9;
+
     /// <summary>主行文字颜色不透明度。与 TL 的 <c>--primary: 0.90</c> 一致。</summary>
     public const double PrimaryOpacity = 0.90;
 
@@ -90,11 +98,20 @@ public readonly record struct LyricsPanelMetrics
     /// 用户是否开启翻译行。即使开启，单行模式下也会被忽略——
     /// 28px 高装不下两行，硬塞会把正文挤没。
     /// </param>
+    /// <param name="maxFontSize">
+    /// 几何上允许的最大字号（DIP）。默认不限。
+    ///
+    /// 与 <paramref name="availableHeight"/> 的分工：后者约束的是**纵向**能否
+    /// 放下两行（横向任务栏的短边就是行高之和的上限），前者约束的是
+    /// **横向**一个字符占多宽。竖排任务栏上后者恒为「不约束」
+    /// （见 <see cref="LyricsMetricsPolicy"/>），约束全部落在这里。
+    /// </param>
     public static LyricsPanelMetrics Create(
         double availableHeight,
         double preferredFontSize,
         bool forceSingleLine = false,
-        bool showTranslation = true)
+        bool showTranslation = true,
+        double maxFontSize = double.PositiveInfinity)
     {
         // 兜底：调用方传了非法值时不抛异常，退到一个能看的默认值。
         // 这类问题应该在上层被拦住，但歌词面板不该因为一个 NaN 就整块消失。
@@ -108,6 +125,13 @@ public readonly record struct LyricsPanelMetrics
             preferredFontSize = 13;
         }
 
+        // NaN 会让下面的 Math.Min 一路污染成 NaN（Math.Max(NaN, 9) 还是 NaN），
+        // 最终字号变成 NaN、整块歌词消失。负数同理按「不限」处理。
+        if (double.IsNaN(maxFontSize) || maxFontSize <= 0)
+        {
+            maxFontSize = double.PositiveInfinity;
+        }
+
         // 两行需要的总高度（含间距）。
         var twoLineHeight = (preferredFontSize * LineHeightFactor * 2) + LineGap;
 
@@ -117,13 +141,12 @@ public readonly record struct LyricsPanelMetrics
 
         if (isSingleLine)
         {
-            // 单行：可以放大一点，但仍受可用高度约束。
+            // 单行：可以放大一点，但仍受可用高度与几何上限约束。
             var fontSize = Math.Min(
-                preferredFontSize * SingleLineFontScale,
-                availableHeight / LineHeightFactor);
+                Math.Min(preferredFontSize * SingleLineFontScale, availableHeight / LineHeightFactor),
+                maxFontSize);
 
-            // 下限 9：再小就看不清了，宁可让调用方知道装不下。
-            fontSize = Math.Max(fontSize, 9);
+            fontSize = Math.Max(fontSize, MinimumFontSize);
 
             return new LyricsPanelMetrics
             {
@@ -137,12 +160,12 @@ public readonly record struct LyricsPanelMetrics
             };
         }
 
-        // 双行：字号受「两行总高」约束。
+        // 双行：字号受「两行总高」与几何上限双重约束。
         var fittedFontSize = Math.Min(
-            preferredFontSize,
-            (availableHeight - LineGap) / (LineHeightFactor * 2));
+            Math.Min(preferredFontSize, (availableHeight - LineGap) / (LineHeightFactor * 2)),
+            maxFontSize);
 
-        fittedFontSize = Math.Max(fittedFontSize, 9);
+        fittedFontSize = Math.Max(fittedFontSize, MinimumFontSize);
 
         return new LyricsPanelMetrics
         {

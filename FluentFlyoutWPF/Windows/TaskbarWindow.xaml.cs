@@ -35,12 +35,12 @@ public partial class TaskbarWindow : Window
     private readonly double _scale = 0.9;
 
     /// <summary>
-    /// 歌词小组件的上限（DIP 视觉长度）。
+    /// 歌词小组件的上限（DIP 视觉长度）——**横向专用**，也用作竖向的兜底值。
     ///
-    /// 横向时是宽度上限；竖向时是**主轴长度**上限。
-    /// 实际定义在 <see cref="TaskbarWidgetControl.MaxLyricsWidgetLength"/>——
-    /// 因为 <c>TaskbarWidgetControl.MeasureDesiredWidth</c> 也要用它做上限，
-    /// 两处必须同一个值，所以只在控件里定义一份。
+    /// 横向时是宽度上限；竖向时只是「拿不到任务栏长度时」的退路，正常路径
+    /// 走 <see cref="ResolveMaxLengthDip"/> 按主轴实际长度现算。
+    /// 实际定义在 <see cref="TaskbarWidgetControl.MaxLyricsWidgetLength"/>，
+    /// 与 <c>MeasureDesiredWidth</c> 的默认参数共用一份。
     /// </summary>
     private const double MaxLyricsWidgetWidth = TaskbarWidgetControl.MaxLyricsWidgetLength;
 
@@ -554,37 +554,41 @@ on_error:
             case 0: // near start (left for horizontal, top for vertical)
                 primaryPos = 20;
 
+                // 先定锚点，再让出频谱的宽度。**顺序不能反**：
+                // 下面 padding 分支是赋值（primaryPos = …）而不是累加，
+                // 先加偏移会被它覆盖掉，频谱就正好盖在 Widgets 按钮上。
+                // 频谱与歌词同时打开时这条路径每次更新都会走到。
+                if (SettingsManager.Current.TaskbarWidgetPadding)
+                {
+                    try
+                    {
+                        // find widget button in XAML
+                        (bool found, Rect nativeWidgetRect) = GetTaskbarWidgetRect(taskbarHandle);
+
+                        // Accept only if the native Widgets button is in the start half of the taskbar
+                        bool inStartHalf = isVertical
+                            ? nativeWidgetRect.Bottom < (taskbarRect.Top + taskbarRect.Bottom) / 2.0
+                            : nativeWidgetRect.Right < (taskbarRect.Left + taskbarRect.Right) / 2.0;
+
+                        if (found && inStartHalf)
+                        {
+                            // Convert absolute screen position to relative position within taskbar
+                            primaryPos = isVertical
+                                ? (int)(nativeWidgetRect.Bottom - taskbarRect.Top) + 2
+                                : (int)(nativeWidgetRect.Right - taskbarRect.Left) + 2;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // fallback to default padding
+                        Logger.Warn(ex, "Failed to get Widgets button position.");
+                        primaryPos += _nativeWidgetsPadding + 2;
+                    }
+                }
+
                 if (SettingsManager.Current.TaskbarVisualizerEnabled && SettingsManager.Current.TaskbarVisualizerPosition == 0)
                     primaryPos += (int)(TaskbarVisualizer.Width * dpiScale) + 4;
 
-                if (!SettingsManager.Current.TaskbarWidgetPadding)
-                    break;
-
-                // automatic widget padding to the start
-                try
-                {
-                    // find widget button in XAML
-                    (bool found, Rect nativeWidgetRect) = GetTaskbarWidgetRect(taskbarHandle);
-
-                    // Accept only if the native Widgets button is in the start half of the taskbar
-                    bool inStartHalf = isVertical
-                        ? nativeWidgetRect.Bottom < (taskbarRect.Top + taskbarRect.Bottom) / 2.0
-                        : nativeWidgetRect.Right < (taskbarRect.Left + taskbarRect.Right) / 2.0;
-
-                    if (found && inStartHalf)
-                    {
-                        // Convert absolute screen position to relative position within taskbar
-                        primaryPos = isVertical
-                            ? (int)(nativeWidgetRect.Bottom - taskbarRect.Top) + 2
-                            : (int)(nativeWidgetRect.Right - taskbarRect.Left) + 2;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // fallback to default padding
-                    Logger.Warn(ex, "Failed to get Widgets button position.");
-                    primaryPos += _nativeWidgetsPadding + 2;
-                }
                 break;
 
             case 1: // center of the taskbar
@@ -730,7 +734,9 @@ on_error:
     /// <item>非歌词模式：直接返回 <c>null</c>，<c>CalculateSize</c> 走原来的 216 常量，
     /// 行为与改动前逐像素一致。</item>
     /// <item>歌词模式但拿不到占用区间（UIA 失败 / 托盘元素不存在）：返回
-    /// <see cref="MaxLyricsWidgetWidth"/>，比 216 宽但仍是个有界值。</item>
+    /// <see cref="MaxLyricsWidgetWidth"/>（480，与 <c>desiredDip</c> 取小），
+    /// 比 216 宽但仍是个有界值。**按主轴现算的自适应上限不参与这条退路**，
+    /// 理由见下方 <c>fallbackWidth</c> 的注释。</item>
     /// <item>歌词模式且拿到区间：返回实测可用长度，且**不超过**理想宽度。</item>
     /// </list>
     /// <para>
@@ -749,37 +755,57 @@ on_error:
             return null;
         }
 
-        var desiredDip = Math.Min(Widget.MeasureDesiredWidth(), MaxLyricsWidgetWidth);
-
         // 任务栏主轴长度，换算到「相对任务栏左上角的物理像素」，
         // 与 UIA 返回的矩形同一坐标系。
+        //
+        // 必须先求它：竖向的「能占多长」上限是按它现算的，不是常量。
         var taskbarLength = isVertical
             ? taskbarRect.Bottom - taskbarRect.Top
             : taskbarRect.Right - taskbarRect.Left;
+
+        var maxLengthDip = ResolveMaxLengthDip(taskbarLength, dpiScale, isVertical);
+        var desiredDip = Math.Min(Widget.MeasureDesiredWidth(maxLengthDip), maxLengthDip);
 
         if (taskbarLength <= 0 || !double.IsFinite(desiredDip) || desiredDip <= 0)
         {
             return MaxLyricsWidgetWidth;
         }
 
+        // 频谱与歌词同时开时，频谱要占的那一段必须从预算里扣掉。
+        //
+        // 它不是「障碍物」而是「同伴」：PositionVisualizer 永远把它贴在小组件
+        // 旁边（见 PositionWidget 里 +Width+4 的偏移），所以只要向避让算法
+        // 多要 84+4，扣回来就是歌词自己的宽度。若把它当固定区间塞进
+        // occupied，避让算法会把「小组件自己现在占的地方」当成禁区，
+        // 宽度会逐帧萎缩（详见 GetOccupiedIntervals 的 remarks）。
+        var visualizerExtraDip = SettingsManager.Current.TaskbarVisualizerEnabled
+            ? TaskbarVisualizer.Width + 4
+            : 0;
+
         var occupied = GetOccupiedIntervals(taskbarHandle, taskbarRect, isVertical);
 
         // 进避让算法前统一换成物理像素：UIA 与 GetWindowRect 都是物理坐标，
         // 而 desiredDip / MaxLyricsWidgetWidth 是 DIP 视觉宽度。
         // 这个换算是本函数唯一的单位边界，进出各一次。
+        //
+        // fallbackWidth 刻意仍是 480，**不跟着竖向上限变大**：它表示
+        // 「一个空隙都塞不进去 / 占用区未知」时退回的有界常量。那种情况下
+        // 任务栏已经没有空间了，退回一个更大的值只会压到托盘图标上。
+        // 它同样不预先扣频谱宽度——扣在下面统一做，于是退路下歌词实际拿
+        // 480−88=392：频谱在场时把 480 全给歌词，加 84 就会顶到托盘。
         var budget = TaskbarWidthBudget.Resolve(
-            desiredWidth: desiredDip * dpiScale,
+            desiredWidth: (desiredDip + visualizerExtraDip) * dpiScale,
             fallbackWidth: MaxLyricsWidgetWidth * dpiScale,
             taskbarLength: taskbarLength,
-            preferredStart: ResolvePreferredStart(taskbarLength, isVertical),
+            preferredStart: ResolvePreferredStart(taskbarLength),
             occupied: occupied);
 
         switch (budget.Outcome)
         {
             case WidthBudgetOutcome.NoUsableGap:
                 Logger.Debug(
-                    "Lyrics widget has no usable taskbar gap (length={0}, desired={1}px); falling back to constant width.",
-                    taskbarLength, desiredDip * dpiScale);
+                    "Lyrics widget has no usable taskbar gap (length={0}, desired={1}px); falling back to bounded width {2} DIP.",
+                    taskbarLength, desiredDip * dpiScale, MaxLyricsWidgetWidth);
                 break;
 
             case WidthBudgetOutcome.OccupancyUnknown:
@@ -791,7 +817,35 @@ on_error:
 
         // 换回 DIP 视觉宽度。budget.Width 是物理像素，而 CalculateSize 的预算
         // 是「乘过 _scale 的视觉宽度」，所以只除 dpiScale，不除 _scale。
-        return budget.Width / dpiScale;
+        //
+        // 再扣掉上面多要的频谱宽度。扣完可能不足 100 DIP（任务栏挤到极限），
+        // 那时歌词只剩一条细缝——这比让它压到托盘图标上要好。
+        var widthDip = (budget.Width / dpiScale) - visualizerExtraDip;
+
+        return Math.Max(widthDip, 0);
+    }
+
+    /// <summary>
+    /// 歌词块「能占多长/多宽」的上限（DIP 视觉宽度）。
+    ///
+    /// 横向：固定 <see cref="MaxLyricsWidgetWidth"/>（480）。横向超长的句子
+    /// 会走滚动（见 <c>LyricsPanel</c> 的跑马灯逻辑），不需要把块做大；
+    /// 而 480 正好挡住任务栏中部的应用按钮。
+    ///
+    /// 竖向：**按任务栏实际主轴长度现算**（<see cref="LyricsVerticalLayout.ResolveMaxMainAxisLength"/>）。
+    /// 竖排没有滚动，估算值超过上限的行会被整行裁掉——4K 竖屏主轴两千多 DIP，
+    /// 继续用 480 会把一句长歌词切在半途（截图矩阵 edge-vertical-v28-font20-long-line
+    /// 就是这个现象）。
+    /// </summary>
+    /// <param name="taskbarLength">任务栏主轴长度（物理像素）。</param>
+    private static double ResolveMaxLengthDip(double taskbarLength, double dpiScale, bool isVertical)
+    {
+        if (!isVertical || taskbarLength <= 0 || !double.IsFinite(dpiScale) || dpiScale <= 0)
+        {
+            return MaxLyricsWidgetWidth;
+        }
+
+        return LyricsVerticalLayout.ResolveMaxMainAxisLength(taskbarLength / dpiScale);
     }
 
     /// <summary>
@@ -801,12 +855,8 @@ on_error:
     /// 和「越靠后越好」，正好对应 <c>TaskbarWidgetPosition</c> 的 0 和 2；
     /// 居中则给真实中点。
     /// </summary>
-    private static double ResolvePreferredStart(double taskbarLength, bool isVertical)
+    private static double ResolvePreferredStart(double taskbarLength)
     {
-        // 竖向任务栏目前不支持歌词（见 LyricsPanel.SupportsVerticalTaskbar），
-        // 这里保留 isVertical 是为了将来接上时不必改签名。
-        _ = isVertical;
-
         return SettingsManager.Current.TaskbarWidgetPosition switch
         {
             0 => -1,                      // near start：越靠前越好
@@ -823,14 +873,23 @@ on_error:
     /// </summary>
     /// <remarks>
     /// <para>
-    /// 只取三块：Widgets 按钮、系统托盘、以及频谱可视化（它也是我们画的，
-    /// 但位置独立计算，必须互相避让）。任务栏上的应用按钮不取——
+    /// 只取两块：Widgets 按钮与系统托盘。任务栏上的应用按钮不取——
     /// 那是用户正在用的东西，UIA 逐个枚举几十个按钮的代价远超收益，
     /// 而 <see cref="TaskbarFreeSpaceLayout"/> 的 <c>safetyGap</c> 已经
     /// 保证不会贴到相邻元素上。
     /// </para>
     /// <para>
-    /// 缓存 500ms。这三块位置的查询全部走跨进程 UIA，单次最坏 1.5s；
+    /// <b>频谱刻意不在这里</b>，尽管它也是我们画的。避让算法只能处理
+    /// 「固定障碍物」，而频谱永远被 <see cref="PositionVisualizer"/> 贴在
+    /// 小组件边上——把它当障碍物会形成正反馈：本帧小组件宽 W，频谱就在
+    /// 它右侧，于是下一帧的空隙变成「W − safetyGap」，再下一帧又少 8……
+    /// 宽度会逐帧萎缩到下限再跳回 480，表现为一条慢速抖动。
+    /// 正确做法是把它当「同伴」：长度从预算里扣（见
+    /// <see cref="ComputeWidgetBudget"/> 的 <c>visualizerExtraDip</c>），
+    /// 而不是作为禁区把空隙切开。
+    /// </para>
+    /// <para>
+    /// 缓存 500ms。这两块位置的查询全部走跨进程 UIA，单次最坏 1.5s；
     /// <c>UpdatePosition</c> 由 1.5s 定时器 + 每次换歌 + 歌词换行触发，
     /// 不缓存会直接把任务栏拖死（见落点文档 3.1 节）。
     /// </para>
@@ -851,7 +910,7 @@ on_error:
             return cached.Occupied;
         }
 
-        var occupied = new List<TaskbarInterval>(3);
+        var occupied = new List<TaskbarInterval>(2);
         var anyQuerySucceeded = false;
 
         // Widgets 按钮
@@ -866,15 +925,6 @@ on_error:
         {
             occupied.Add(trayInterval);
             anyQuerySucceeded = true;
-        }
-
-        // 频谱可视化：位置由 PositionVisualizer 决定，但那一刻的坐标要等
-        // 本次 UpdatePosition 走完才有。用上一帧的 Canvas 位置换算，
-        // 首次调用时 Canvas 尚未设置，跳过即可。
-        if (SettingsManager.Current.TaskbarVisualizerEnabled &&
-            TryGetVisualizerInterval(taskbarRect, isVertical, out var visualizerInterval))
-        {
-            occupied.Add(visualizerInterval);
         }
 
         if (!anyQuerySucceeded)
@@ -947,51 +997,6 @@ on_error:
             Logger.Debug(ex, "Failed to query taskbar element bounds for occupancy.");
             return false;
         }
-    }
-
-    /// <summary>
-    /// 频谱可视化当前占的主轴区间。
-    ///
-    /// 位置读 Canvas 上的逻辑坐标（DIP）再乘 DPI 换回物理像素，
-    /// 与 <see cref="PositionVisualizer"/> 写进去的值同一来源。
-    /// </summary>
-    private bool TryGetVisualizerInterval(RECT taskbarRect, bool isVertical, out TaskbarInterval interval)
-    {
-        interval = default;
-
-        var primaryStart = isVertical ? Canvas.GetTop(TaskbarVisualizer) : Canvas.GetLeft(TaskbarVisualizer);
-        if (!double.IsFinite(primaryStart) || primaryStart <= 0)
-        {
-            return false;
-        }
-
-        var dpiScale = GetDpiForWindow(_lastTaskbarHandle) / 96.0;
-        if (dpiScale <= 0)
-        {
-            return false;
-        }
-
-        // 竖向任务栏下频谱被旋转 90°，主轴方向的实际长度是它的 Height。
-        var primaryLength = isVertical ? TaskbarVisualizer.Height : TaskbarVisualizer.Width;
-        if (!double.IsFinite(primaryLength) || primaryLength <= 0)
-        {
-            return false;
-        }
-
-        var start = primaryStart * dpiScale;
-        var end = start + (primaryLength * dpiScale);
-
-        var taskbarLength = isVertical
-            ? taskbarRect.Bottom - taskbarRect.Top
-            : taskbarRect.Right - taskbarRect.Left;
-
-        if (end <= 0 || start >= taskbarLength)
-        {
-            return false;
-        }
-
-        interval = new TaskbarInterval(start, end);
-        return true;
     }
 
     private Rect PositionVisualizer(IntPtr taskbarHandle, RECT taskbarRect, double dpiScale, bool isMainTaskbarSelected, bool isVertical)

@@ -43,19 +43,24 @@
                            TextWrapping="WrapWithOverflow" Text="{DynamicResource LyricsDescription}" />
             </StackPanel>
 
-            <!-- 前置条件：任务栏小组件必须开着，歌词才有地方显示 -->
-            <ui:InfoBar Grid.Row="1" Title="{DynamicResource LyricsRequiresWidgetWarning}" IsOpen="True" Severity="Warning" IsClosable="False" Margin="0,0,0,8">
-                <ui:InfoBar.Style>
-                    <Style TargetType="ui:InfoBar" BasedOn="{StaticResource {x:Type ui:InfoBar}}">
-                        <Setter Property="Visibility" Value="Collapsed" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding TaskbarWidgetEnabled}" Value="False">
-                                <Setter Property="Visibility" Value="Visible" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </ui:InfoBar.Style>
-            </ui:InfoBar>
+            <!-- 前置条件提示。用 StackPanel 竖排是为了将来多条同时成立时不用改结构。
+                 这里曾经还有一条「歌词与频谱互斥」的提示（带一个「关闭频谱并启用歌词」
+                 的按钮），两者改为可同时开启后已删除——现在同时开会并排显示，不是冲突。 -->
+            <StackPanel Grid.Row="1">
+                <!-- 前置条件：任务栏小组件必须开着，歌词才有地方显示 -->
+                <ui:InfoBar Title="{DynamicResource LyricsRequiresWidgetWarning}" IsOpen="True" Severity="Warning" IsClosable="False" Margin="0,0,0,8">
+                    <ui:InfoBar.Style>
+                        <Style TargetType="ui:InfoBar" BasedOn="{StaticResource {x:Type ui:InfoBar}}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding TaskbarWidgetEnabled}" Value="False">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ui:InfoBar.Style>
+                </ui:InfoBar>
+            </StackPanel>
 
             <ui:CardControl x:Name="LyricsEnabledCard" Tag="Indexable" Grid.Row="2" Icon="{ui:SymbolIcon TextEffects24}" Margin="0,0,0,3">
                 <ui:CardControl.Header>
@@ -168,6 +173,8 @@
                     <StackPanel Orientation="Vertical">
                         <TextBlock Text="{DynamicResource LyricsOffsetTitle}" FontSize="14" FontWeight="Regular" VerticalAlignment="Center" />
                         <TextBlock Text="{DynamicResource LyricsOffsetDescription}" FontSize="12" Opacity="0.5" />
+                        <TextBlock Text="{DynamicResource LyricsTimelineNotice}" FontSize="12" Opacity="0.5"
+                                   TextWrapping="Wrap" Margin="0,4,0,0" />
                     </StackPanel>
                 </ui:CardControl.Header>
                 <StackPanel Orientation="Horizontal">

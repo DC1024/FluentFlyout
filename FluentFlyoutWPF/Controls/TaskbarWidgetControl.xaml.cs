@@ -43,17 +43,20 @@ public partial class TaskbarWidgetControl : UserControl
     private readonly int _nativeWidgetsPadding = 216;
 
     /// <summary>
-    /// 歌词模式下这块占位「最多能占多大」的上限（DIP 视觉长度）。
+    /// 歌词模式下这块占位「最多能占多大」的默认上限（DIP 视觉长度）。
     ///
     /// 横向时是宽度上限；竖向时是**主轴长度**上限。同一常量两种含义，
     /// 因为两者都是「沿可协商方向能占多少」——横向能协商宽度，
     /// 竖向能协商的只有长度（宽度被任务栏本身钉死）。
     ///
-    /// 取 480 的理由：一句歌词按 13px 字号要 300–450 DIP 才不截断。
-    /// 480 是 216 的 2.2 倍，在 100% DPI 下刚好容纳约 32 个汉字
-    /// 或 60 个西文字符，再大就会开始盖住任务栏中部的应用按钮。
+    /// 取值与理由见 <see cref="LyricsVerticalLayout.DefaultMaxMainAxisLength"/>：
+    /// 480 是 1080p 的经验值。**竖向实际用的上限不是它**——那一条由
+    /// <c>TaskbarWindow</c> 按任务栏真实主轴长度经
+    /// <see cref="LyricsVerticalLayout.ResolveMaxMainAxisLength"/> 现算后传进来，
+    /// 见 <see cref="MeasureDesiredWidth"/>。这里保留常量是为了两件事：
+    /// 横向宽度的上限，以及竖向下「拿不到任务栏尺寸」时的兜底。
     /// </summary>
-    public const double MaxLyricsWidgetLength = 480;
+    public const double MaxLyricsWidgetLength = LyricsVerticalLayout.DefaultMaxMainAxisLength;
 
     // Cached width calculations
     private string _cachedTitleText = string.Empty;
@@ -113,6 +116,15 @@ public partial class TaskbarWidgetControl : UserControl
 
         // Initialize control order
         ReorderControls();
+
+        // 面板内容宽度变了（换歌定下整首宽度、字号变化）要立刻重排一次。
+        //
+        // 不能靠 TaskbarWindow 的 1.5s 定时器兜底：那期间胶囊还停在旧宽度上，
+        // 长句会先按旧视口开始滚动，等定时器到点才变宽、句子不再溢出，
+        // 那次滚动白跑一趟——真机验收报的正是这个。
+        // 阈值过滤在面板里做，这里不再判：能到这里说明宽度确实变了。
+        LyricsPanel.DesiredWidthChanged += (_, _) =>
+            WidgetWidthStrategyChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void ReorderControls()
@@ -458,7 +470,16 @@ public partial class TaskbarWidgetControl : UserControl
     /// <b>竖向时返回值语义不同</b>：不是宽度而是**主轴长度**（屏幕纵向）。
     /// 竖向任务栏宽度固定（通常 40–60 DIP），能协商的只有沿主轴占多长。
     /// </summary>
-    public double MeasureDesiredWidth()
+    /// <param name="maxMainAxisLength">
+    /// 竖向时可占的主轴长度上限（DIP 视觉长度）。横向忽略此参数。
+    ///
+    /// 由调用方按任务栏实际主轴长度现算（<c>TaskbarWindow</c> →
+    /// <see cref="LyricsVerticalLayout.ResolveMaxMainAxisLength"/>）。
+    /// 用参数而不是常量，是因为竖排**没有滚动**：估算值一旦超过上限，
+    /// 超出的行会被整行裁掉，屏幕上表现为「句子没写完」。4K 竖屏的主轴
+    /// 有两千多 DIP，跟 1080p 用同一个 480 会把长句切在半途。
+    /// </param>
+    public double MeasureDesiredWidth(double maxMainAxisLength = MaxLyricsWidgetLength)
     {
         if (!_isLyricsMode)
         {
@@ -475,9 +496,11 @@ public partial class TaskbarWidgetControl : UserControl
             // 截图矩阵实测：双行状态按主行估 29.9 DIP、实际要 63.4 DIP，
             // 次要行被 ClipToBounds 整行裁掉。
             //
-            // 上限给 MaxLyricsWidgetLength：横向时它是 480 DIP 宽度，
-            // 竖向时同值作为「最多占主轴 480 DIP」——对 1080p 屏
-            //（主轴约 1040 DIP）不到一半，不会盖住任务栏中部的应用按钮。
+            // 上限由调用方给：横向时它是 480 DIP 宽度，竖向时是
+            // 「最多占主轴多少」（按任务栏长度现算，4K 竖屏会比 480 大）。
+            // 对 1080p 屏来说主轴约 1040 DIP，一半即 520，不到中点，
+            // 不会盖住任务栏中部的应用按钮——这条不变量在
+            // LyricsVerticalLayout.ResolveMaxMainAxisLength 里写成常量。
             var crossSize = _isSmallTaskbar
                 ? LyricsMetricsPolicy.SmallTaskbarCrossSize
                 : LyricsMetricsPolicy.DefaultTaskbarCrossSize;
@@ -485,7 +508,7 @@ public partial class TaskbarWidgetControl : UserControl
             var estimate = LyricsVerticalLayout.EstimateMainAxisLength(
                 content: LyricsPanel.MeasureVerticalContent(),
                 crossSize: crossSize,
-                maxLength: MaxLyricsWidgetLength);
+                maxLength: maxMainAxisLength);
 
             // 用面板的**实测内容高度**兜住估算偏小的一侧。
             //
@@ -499,7 +522,7 @@ public partial class TaskbarWidgetControl : UserControl
             var measured = LyricsPanel.VerticalContentHeight;
             if (double.IsFinite(measured) && measured > estimate)
             {
-                return Math.Min(measured, MaxLyricsWidgetLength);
+                return Math.Min(measured, maxMainAxisLength);
             }
 
             return estimate;
@@ -559,6 +582,22 @@ public partial class TaskbarWidgetControl : UserControl
             isSmallTaskbar: _isSmallTaskbar,
             preferredFontSize: settings.LyricsFontSize,
             userSingleLine: settings.LyricsSingleLine);
+    }
+
+    /// <summary>
+    /// 换歌时把整首歌词交给面板，用来定下这首歌的固定宽度。
+    /// </summary>
+    /// <remarks>
+    /// 宽度按「整首最宽的一句」定，而不是按当前行：胶囊才不会随每句胀缩，
+    /// 长句也不会出现「先滚动、一秒后变宽」的抖动。详见
+    /// <see cref="LyricsDocumentWidth"/>。
+    ///
+    /// 调用顺序要求：**先给文档、再给这一帧**（装配层在同一次
+    /// <c>FrameReady</c> 里按这个顺序调用），否则第一句会先按旧宽度排一次版。
+    /// </remarks>
+    public void ApplyLyricDocument(IReadOnlyList<LyricLine>? lines)
+    {
+        LyricsPanel.ApplyDocument(lines);
     }
 
     /// <summary>

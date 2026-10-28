@@ -421,7 +421,11 @@ public sealed class LyricResolutionCoordinator : ILyricResolutionCoordinator
                 new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["source"] = "local"
-                });
+                },
+                // 本地文件没有「源声明时长」，只能借用播放器报的时长。
+                // 有真实时间轴的播放器用不上这个值（本地时钟策略不会命中），
+                // 传下去纯粹是为了让退化路径有可能拿到上限。
+                track.Duration);
         }
         finally
         {
@@ -761,7 +765,16 @@ public sealed class LyricResolutionCoordinator : ILyricResolutionCoordinator
             if (source.ProviderId == KnownLyricProviders.QQMusic && rawPayload.Format == LyricPayloadFormat.Qrc)
                 diagnostics[QqMusicContentRevision.DiagnosticKey] = QqMusicContentRevision.Current;
             return new CandidateResolution(
-                new ResolvedLyrics(parsed!, source.ProviderId, candidate.CandidateId, acquisition, diagnostics), false);
+                new ResolvedLyrics(
+                    parsed!,
+                    source.ProviderId,
+                    candidate.CandidateId,
+                    acquisition,
+                    diagnostics,
+                    // 候选自带的曲目时长：QQ 音乐来自搜索结果的 interval，
+                    // Lyricify 来自 payload 的 duration。这是整条链路上唯一
+                    // 「可信的曲长来源」——SMTC 在网易云场景恒为 0。
+                    candidate.Duration), false);
         }
 
         return CandidateResolution.Invalid;

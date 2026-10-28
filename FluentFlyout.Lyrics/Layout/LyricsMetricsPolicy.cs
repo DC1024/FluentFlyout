@@ -93,20 +93,46 @@ public static class LyricsMetricsPolicy
         //    竖向的约束是宽度，靠换行解决，再压成单行等于把唯一的优势扔掉。
         var forceSingleLine = userSingleLine || (isSmallTaskbar && !isVertical);
 
-        return LyricsPanelMetrics.Create(availableHeight, preferredFontSize, forceSingleLine);
+        return LyricsPanelMetrics.Create(
+            availableHeight,
+            preferredFontSize,
+            forceSingleLine,
+            // 竖向：短边约束的是「一行放几个字」，交给 maxFontSize；
+            // 横向：短边已经在 availableHeight 里约束行高，这里不再重复夹。
+            maxFontSize: isVertical ? GetVerticalMaxFontSize(isSmallTaskbar) : double.PositiveInfinity);
     }
 
     /// <summary>
-    /// 竖向任务栏上「一行」能占的高度上限（DIP）——也就是任务栏的宽度。
+    /// 竖排时一行里至少要放得下几个汉字。
     ///
-    /// 与 <see cref="LyricsPanelMetrics.LineHeight"/> 比较即可判断
-    /// 「这个宽度的任务栏还放得下正常字号吗」。目前 60 DIP 的竖向任务栏
-    /// 配 13px 字（行高 14.95）绰绰有余，所以没有额外的降级路径；
-    /// 留着这个方法是为了让「宽度是不是约束」这件事在调用点显式可见，
-    /// 而不是埋在注释里。
+    /// 两个：一个字的竖条读不成句，两个才能「读」——这是可读性的下限，
+    /// 不是排版偏好。截图矩阵实测：28 DIP 短边配 20px 字时一行只站一个
+    /// 汉字，30 字的长句变成 30 行独字塔，用户看不出这是歌词。
     /// </summary>
-    public static double GetVerticalLineBudget(bool isSmallTaskbar)
+    public const int MinimumGlyphsPerLine = 2;
+
+    /// <summary>
+    /// 字宽的安全余量（DIP）。
+    ///
+    /// 汉字字宽≈字号，但 WPF 的字符步进（advance）有亚像素舍入，
+    /// 恰好 N×字号 = 短边时偶尔会多折一个字。留半像素把这种边界抖开。
+    /// 取得比 <c>LyricsVerticalLayout.WrapSafetyMargin</c>（4 DIP）小，
+    /// 是因为这里直接决定字号：多留 1 DIP 就会让默认 13px 在 28 DIP 短边上
+    /// 被压到 12px，白白变小一圈。
+    /// </summary>
+    public const double VerticalGlyphSafetyMargin = 0.5;
+
+    /// <summary>
+    /// 竖向任务栏上允许的最大字号（DIP）——由短边与「每行至少两个字」推出。
+    ///
+    /// 与 <see cref="LyricsPanelMetrics.MinimumFontSize"/> 的关系：这里可能
+    /// 算出比下限还小的值（例如 16 DIP 的极窄任务栏），最终字号的夹取顺序是
+    /// 「先夹几何上限，再抬到下限」，所以极端情况下仍然是一个字一行——
+    /// 那种宽度本来也放不下两个能看清的字，抬到下限更符合直觉。
+    /// </summary>
+    public static double GetVerticalMaxFontSize(bool isSmallTaskbar)
     {
-        return isSmallTaskbar ? SmallTaskbarCrossSize : DefaultTaskbarCrossSize;
+        var crossSize = isSmallTaskbar ? SmallTaskbarCrossSize : DefaultTaskbarCrossSize;
+        return (crossSize / MinimumGlyphsPerLine) - VerticalGlyphSafetyMargin;
     }
 }

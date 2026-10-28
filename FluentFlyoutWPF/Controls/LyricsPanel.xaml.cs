@@ -81,6 +81,8 @@ public partial class LyricsPanel : UserControl
     /// <summary>累积的降级次数，供诊断与设置界面展示。</summary>
     public int DowngradeCount { get; private set; }
 
+    private bool _showTranslation = true;
+
     /// <summary>
     /// 用户是否开启翻译行（设置项）。默认开启。
     /// </summary>
@@ -89,8 +91,28 @@ public partial class LyricsPanel : UserControl
     /// 后者是**度量层**的判断（单行模式装不下翻译，硬件上不允许），
     /// 这里是**用户层**的偏好（双行模式装得下，但用户不想看）。
     /// 两者取与：度量说不行就是不行，度量说行还要用户同意。
+    ///
+    /// <para>
+    /// 赋值会重算「整首歌的宽度」：翻译行参与宽度测量，关掉后宽度必须收回去，
+    /// 否则胶囊会一直为一行看不见的翻译留白。值没变时直接返回，所以
+    /// 设置页每次重刷（<c>ApplyLyricsSettings</c>）不会反复量整首歌词。
+    /// </para>
     /// </remarks>
-    public bool ShowTranslation { get; set; } = true;
+    public bool ShowTranslation
+    {
+        get => _showTranslation;
+        set
+        {
+            if (_showTranslation == value)
+            {
+                return;
+            }
+
+            _showTranslation = value;
+            RecalculateDocumentWidth();
+            ReportDesiredWidth();
+        }
+    }
 
     /// <summary>
     /// 用户是否开启逐字扫描（设置项）。默认开启。
@@ -144,6 +166,23 @@ public partial class LyricsPanel : UserControl
 
     private double _lastReportedWidth = -1;
 
+    /// <summary>
+    /// 整首歌词里最宽一句的宽度（DIP），0 表示还没有文档。
+    ///
+    /// <para>
+    /// 小组件的宽度按它定，**歌内不再变**。按当前行量宽度的做法会让胶囊
+    /// 随每一句胀缩，长句还会「先滚动、一秒后变宽、滚动白跑」——
+    /// 这两点都是真机验收报上来的问题。理由详见
+    /// <see cref="LyricsDocumentWidth"/>。
+    /// </para>
+    /// </summary>
+    private double _documentMaxWidth;
+
+    /// <summary>
+    /// 当前文档的行。字号变化要重新量一遍宽度，所以原始文本得留着。
+    /// </summary>
+    private IReadOnlyList<LyricLine>? _documentLines;
+
     public LyricsPanel()
     {
         InitializeComponent();
@@ -192,13 +231,26 @@ public partial class LyricsPanel : UserControl
     /// <summary>
     /// 内容需要的宽度（DIP），供宿主在 <c>CalculateSize</c> 里使用。
     ///
+    /// <para>
+    /// 优先返回**整首歌最宽一句**的宽度（见 <see cref="_documentMaxWidth"/>），
+    /// 只有文档还没到（刚切到歌词模式、纯音乐、没搜到词）时才退回当前行宽度。
+    /// 这条优先级是「胶囊不随换行胀缩」的落点：宿主拿到的宽度在同一首歌里恒定。
+    /// </para>
+    ///
+    /// <para>
     /// 与 <see cref="MeasureDesiredWidth"/> 的区别：这个属性读缓存，
     /// 可以在任意时刻廉价查询；后者会真的去量文本。
+    /// </para>
     /// </summary>
     public double DesiredContentWidth
     {
         get
         {
+            if (_documentMaxWidth > 0)
+            {
+                return _documentMaxWidth;
+            }
+
             if (_cachedPrimaryTextWidth > 0)
             {
                 return _cachedPrimaryTextWidth;
@@ -208,6 +260,47 @@ public partial class LyricsPanel : UserControl
             UpdatePrimaryTextWidth();
             return _cachedPrimaryTextWidth;
         }
+    }
+
+    /// <summary>
+    /// 换歌时把整首歌词交给面板，用来定下「这首歌的宽度」。
+    /// </summary>
+    /// <remarks>
+    /// 必须在**这首歌的第一帧之前**调用，否则第一句会先按旧宽度排一次版。
+    /// 装配层是在同一次 <c>FrameReady</c> 里先给文档再给帧，满足这个顺序。
+    /// 传 null 表示没有歌词（纯音乐 / 搜不到 / 停止播放），宽度退回按当前行量。
+    /// </remarks>
+    public void ApplyDocument(IReadOnlyList<LyricLine>? lines)
+    {
+        _documentLines = lines;
+        RecalculateDocumentWidth();
+        ReportDesiredWidth();
+    }
+
+    /// <summary>
+    /// 按当前字号把整首歌词重新量一遍，取最宽的一句。
+    ///
+    /// <para>
+    /// 竖向不算：竖向的宽度被任务栏宽度钉死，能协商的是主轴长度，
+    /// 走的是 <see cref="MeasureVerticalContent"/>，这里量了也用不上。
+    /// </para>
+    /// </summary>
+    private void RecalculateDocumentWidth()
+    {
+        if (!_hasMetrics || _isVertical || _documentLines is not { Count: > 0 })
+        {
+            _documentMaxWidth = 0;
+            return;
+        }
+
+        _documentMaxWidth = LyricsDocumentWidth.MeasureMaxLineWidth(
+            _documentLines,
+            text => MeasureText(text, _metrics.FontSize),
+            // 单行模式装不下翻译、或用户关掉了翻译：都不该算进宽度，
+            // 否则胶囊会为一行根本不画的文本留白。
+            _metrics.IsSingleLine || !ShowTranslation
+                ? null
+                : text => MeasureText(text, _metrics.TranslationFontSize));
     }
 
     /// <summary>当前度量，供宿主查询所需宽度/高度。</summary>
@@ -320,6 +413,10 @@ public partial class LyricsPanel : UserControl
         // 字号变了文本宽度也会变，缓存必须失效。
         _cachedMeasuredFontSize = -1;
         UpdatePrimaryTextWidth();
+
+        // 整首歌的宽度是按字号量出来的，字号变了必须重量——
+        // 否则用户把字号从 13 调到 20，胶囊还停在旧宽度上，长句会被裁。
+        RecalculateDocumentWidth();
 
         // 竖向时字号变化会改变折行位置：视口宽度没变，但折行点与行数都变了，
         // 必须重新量一次折行高度。SizeChanged 不会触发（宽度确实没变）。
@@ -804,12 +901,14 @@ public partial class LyricsPanel : UserControl
     /// <summary>
     /// 按当前文本宽度上报「希望多宽」。
     ///
-    /// 宽度只在离散信号变化后才可能变（换行、换翻译），
+    /// 宽度只在离散信号变化后才可能变（换歌、换翻译、字号/对齐变化），
     /// 所以这里用阈值过滤，避免长句滚动/逐字扫描期间反复请求重排。
     /// </summary>
     private void ReportDesiredWidth()
     {
-        var desired = MeasureDesiredWidth();
+        // 有整首文档时用「全曲最宽句」——宽度在歌内恒定，换行不再触发重排。
+        // 没有文档（首帧之前、纯音乐、没搜到词）才退回按当前行量。
+        var desired = _documentMaxWidth > 0 ? _documentMaxWidth : MeasureDesiredWidth();
         if (desired <= 0)
         {
             return;

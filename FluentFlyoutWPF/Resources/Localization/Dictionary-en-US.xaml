@@ -304,7 +304,7 @@ You can help contribute translations on</System:String>
     <System:String x:Key="LyricsDescription">Show synchronized lyrics for the current track in the taskbar widget, with word-by-word highlighting, a translation line, and wrapping on vertical taskbars.</System:String>
     <System:String x:Key="LyricsRequiresWidgetWarning">Lyrics are drawn on the taskbar widget. Enable it under "Taskbar Widget" first.</System:String>
     <System:String x:Key="LyricsEnabledTitle">Show lyrics on the taskbar</System:String>
-    <System:String x:Key="LyricsEnabledDescription">Replace the song title and artist with lyrics. Mutually exclusive with the visualizer</System:String>
+    <System:String x:Key="LyricsEnabledDescription">Replace the song title and artist with lyrics. Can run alongside the visualizer</System:String>
     <System:String x:Key="LyricsFontSizeTitle">Lyrics font size</System:String>
     <System:String x:Key="LyricsFontSizeDescription">In pixels. Shrinks automatically when the taskbar is too short</System:String>
     <System:String x:Key="LyricsShowTranslationTitle">Show translation line</System:String>
@@ -323,6 +323,7 @@ You can help contribute translations on</System:String>
     <System:String x:Key="LyricsAlignmentRight">Right</System:String>
     <System:String x:Key="LyricsOffsetTitle">Offset for current track</System:String>
     <System:String x:Key="LyricsOffsetDescription">Positive makes lyrics earlier, negative later, in milliseconds. Saved per track</System:String>
+    <System:String x:Key="LyricsTimelineNotice">NetEase Cloud Music, Kugou and similar players do not report playback position to the system, so lyrics count from the start of the current playback. After resuming mid-track or after seeking, correct it with the offset above.</System:String>
     <System:String x:Key="LyricsVerticalTaskbarNote">On a vertical taskbar, lyrics wrap and fill the whole taskbar instead of being squeezed into one line.</System:String>
     <System:String x:Key="LyricsSourceNote">Lyrics come from QQ Music, Kugou, NetEase and LRCLIB. The first play of a track needs a network lookup; results are cached locally afterwards.</System:String>
 </ResourceDictionary>

@@ -1186,16 +1186,18 @@ public partial class UserSettings : ObservableObject
     /// </summary>
     /// <remarks>
     /// <para>
-    /// 互斥规则（实施计划 P4-6）：**歌词开启时强制关闭频谱可视化**。
-    /// 理由不是「代码上冲突」，而是空间上冲突——两者都占据任务栏上
-    /// 紧邻小组件的那一块，同时开会把整条任务栏挤满，用户还分不清
-    /// 哪块是谁。这里的做法是单向的：开歌词就关频谱，
-    /// 但关歌词**不自动开回频谱**（用户可能是主动关掉的）。
+    /// 与频谱可视化**可以同时开启**：两块并排占位，由
+    /// <c>TaskbarWindow.ComputeWidgetBudget</c> 通过
+    /// <c>GetOccupiedIntervals</c> 互相避让（频谱区间本来就在占用列表里）。
     /// </para>
     /// <para>
-    /// 反过来（开频谱时关歌词）不在这里做，而在
-    /// <see cref="OnTaskbarVisualizerEnabledChanged"/> 里——两个方向各管一段，
-    /// 避免两个钩子互相改对方的字段而触发无限递归。
+    /// 这里曾经有一条互斥规则（实施计划 P4-6：开歌词就强制关频谱），
+    /// 理由是「两者都占紧邻小组件的那一块，同时开会挤满任务栏」。
+    /// 实测这个理由不成立：频谱固定 84 DIP、歌词块按内容收缩，
+    /// 2560 宽的任务栏上合计只占 22%，且避让算法保证两块不重叠。
+    /// 代价却是实实在在的——用户在频谱页打开开关，回到歌词页发现歌词
+    /// 开关自己变成了关，完全不知道是谁关的。为省 84 DIP 让用户丢掉一个
+    /// 正在用的功能，不值得。
     /// </para>
     /// </remarks>
     partial void OnLyricsEnabledChanged(bool oldValue, bool newValue)
@@ -1218,27 +1220,20 @@ public partial class UserSettings : ObservableObject
         // 否则会出现「开关开着但没歌词」。完整清单见
         // Pages/LyricsPage.xaml.cs 的类级 remarks。
 
-        if (newValue && TaskbarVisualizerEnabled)
-        {
-            TaskbarVisualizerEnabled = false;
-        }
-
         MainWindow mainWindow = (MainWindow)Application.Current.MainWindow;
         mainWindow.ApplyLyricsSettings();
         UpdateTaskbar();
     }
 
     /// <summary>
-    /// 频谱开启时关掉歌词（<see cref="OnLyricsEnabledChanged"/> 的反向）。
+    /// 频谱开关变化：启停音频采集 + 让任务栏窗口重建布局。
+    ///
+    /// 与歌词**不再互斥**，理由见 <see cref="OnLyricsEnabledChanged"/> 的
+    /// remarks。这个钩子只负责频谱自己那半边。
     /// </summary>
     partial void OnTaskbarVisualizerEnabledChanged(bool oldValue, bool newValue)
     {
         if (oldValue == newValue || _initializing) return;
-
-        if (newValue && LyricsEnabled)
-        {
-            LyricsEnabled = false;
-        }
 
         TaskbarVisualizerControl.OnTaskbarVisualizerEnabledChanged(newValue);
         UpdateTaskbar();

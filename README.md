@@ -33,6 +33,7 @@ FluentFlyout features smooth animations, blends with your system's color themes 
 - **"Up Next" flyout: shows what's next when a song ends**
 - **Lock Keys flyout: displays the status of lock keys at a glance**
 - **Taskbar widget: shows media info directly on the Windows taskbar**
+- **Taskbar lyrics: synchronized lyrics with word-by-word highlighting and a translation line**
 - Native Windows-like design
 - Uses Fluent 2 components
 - Utilises Windows Mica blur
@@ -64,6 +65,21 @@ FluentFlyout features smooth animations, blends with your system's color themes 
 https://github.com/user-attachments/assets/bfc7666f-1d59-4cbf-8d15-3855671cb147
 
 </details>
+
+## Lyrics 🎤
+Lyrics are drawn inside the taskbar widget, replacing the title and artist while a track is playing. Enable them under **Lyrics** in the settings; the taskbar widget has to be on first.
+
+- **Synchronized scrolling** — the panel follows the current line, and lines wider than the widget scroll rather than being truncated
+- **Word-by-word highlighting** — karaoke-style fill for sources that carry per-syllable timing; turn it off to save CPU
+- **Translation line** — the second line shows the translation when the source has one, otherwise the next line
+- **Vertical taskbars** — lyrics wrap and use the full taskbar height rather than being squeezed into one line
+- **Per-track offset** — nudge lyrics earlier or later in milliseconds; saved per track
+- **Custom colour and alignment** — follow the system theme, or set your own `#RRGGBB` / `#AARRGGBB` / `#RGB`
+- **Runs alongside the visualizer** — both can be enabled at once and share the available width
+
+Lyrics are looked up from QQ Music, Kugou, NetEase Cloud Music and LRCLIB, in that order. The first play of a track needs a network lookup; results are cached locally afterwards.
+
+> **Players that don't report playback position.** NetEase Cloud Music, Kugou and similar players leave the Windows media timeline at zero — the position stays at `00:00` and never advances. FluentFlyout detects this and counts from the moment playback starts instead, so lyrics still scroll. If you resume mid-track or seek, the count is off by however far you jumped; correct it with the per-track offset above.
 
 ## Flyouts and more 🎵
 <div align="center">
@@ -101,6 +117,7 @@ https://github.com/user-attachments/assets/bfc7666f-1d59-4cbf-8d15-3855671cb147
 ## Contributing 💖
 Please feel free to contribute in any way you can! Check out [CONTRIBUTING.md](https://github.com/unchihugo/FluentFlyout/blob/master/.github/CONTRIBUTING.md) to get started.
 If you want to help with translations, please visit our [Weblate page](https://hosted.weblate.org/engage/fluentflyout/).
+If you're touching the lyrics pipeline, read [docs/lyrics-integration/architecture.md](docs/lyrics-integration/architecture.md) first — it documents the layer boundaries and the timing rules that aren't obvious from the code.
 
 ### Translation Status
 <a href="https://hosted.weblate.org/engage/fluentflyout/">

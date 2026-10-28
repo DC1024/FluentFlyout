@@ -19,11 +19,22 @@ public sealed class LyricSyncService : IDisposable
     private static readonly TimeSpan DefaultMetadataStabilizationDelay = TimeSpan.FromMilliseconds(750);
     private static readonly TimeSpan[] NetworkRetryDelays = [TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5)];
 
+    /// <summary>
+    /// 歌词源没给曲长时，用「最后一句的时间 + 这段余量」近似曲终。
+    ///
+    /// <para>
+    /// 取 30 秒是有意偏大：归位晚了只是第二遍开头几秒仍卡在末行，
+    /// 归位早了会让歌词在歌还没唱完时跳回第一句——后者更像故障。
+    /// </para>
+    /// </summary>
+    private static readonly TimeSpan EstimatedTailMargin = TimeSpan.FromSeconds(30);
+
     private readonly ILyricResolutionCoordinator _coordinator;
     private readonly Func<string?, TimeSpan> _getPlayerLeadTime;
     private readonly Func<TrackInfo?, string?, TimeSpan> _getTrackLeadTime;
     private readonly TimeSpan _metadataStabilizationDelay;
     private readonly TimeProvider _timeProvider;
+    private readonly Action<TimeSpan?>? _onTrackEndEstimateChanged;
     private TrackInfo? _currentTrack;
     private string? _currentTrackId;
     private LyricDocument? _currentDocument;
@@ -40,24 +51,59 @@ public sealed class LyricSyncService : IDisposable
     private int _lastEmittedLineIndex = -1;
     private long _documentLoadedTicks;
     private TimeSpan? _lastSearchDuration;
+    private TimeSpan? _currentTrackEndEstimate;
 
     public string? CurrentLyricSourceApp => _currentLyricSourceApp;
     public LyricAcquisitionKind CurrentLyricAcquisition => _currentLyricAcquisition;
     public long CurrentLyricFetchElapsedMilliseconds => _currentLyricFetchElapsedMilliseconds;
     public DateTimeOffset? CurrentLyricResolvedAtUtc => _currentLyricResolvedAtUtc;
 
+    /// <summary>
+    /// 当前歌词对应的曲目总长估计，供时间轴层判断「一遍唱完了」。
+    ///
+    /// <para>
+    /// 优先用歌词源声明的真实时长（<see cref="ResolvedLyrics.SourceTrackDuration"/>）；
+    /// 拿不到时退化为「最后一句的时间 + 尾奏余量」，再拿不到就是 <c>null</c>
+    /// ——此时时间轴层退回无上限行为，即修复前的样子。
+    /// </para>
+    ///
+    /// <para>
+    /// 换歌或换会话时会被清成 <c>null</c>。装配层必须在这之后主动把新值推给
+    /// 时间轴注册表；否则上一首的时长会继续生效，本地时钟会在错误的位置归零。
+    /// </para>
+    /// </summary>
+    public TimeSpan? CurrentTrackEndEstimate => _currentTrackEndEstimate;
+
+    /// <summary>
+    /// 当前曲目已解析出的整份歌词。没有曲目、还没解析出来、或纯音乐时为 <c>null</c>。
+    ///
+    /// <para>
+    /// 给渲染层算「整首歌的固定宽度」用：按当前行量宽度会让小组件随每句胀缩，
+    /// 长句还会先开始滚动、等一秒后宽度变大时才停下，那次滚动白跑一趟。
+    /// 整份文档在解析完成的那一刻就定了，歌内不再变，正好用来定宽度。
+    /// </para>
+    ///
+    /// <para>
+    /// 返回的是不可变快照（<see cref="LyricDocument.Lines"/> 构造后只读），
+    /// 调用方随便遍历，不需要加锁。换歌会换成新实例，引用比较即可判断变没变。
+    /// </para>
+    /// </summary>
+    public LyricDocument? CurrentDocument => _currentDocument;
+
     public LyricSyncService(
         ILyricResolutionCoordinator coordinator,
         Func<string?, TimeSpan>? getPlayerLeadTime = null,
         Func<TrackInfo?, string?, TimeSpan>? getTrackLeadTime = null,
         TimeSpan? metadataStabilizationDelay = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        Action<TimeSpan?>? onTrackEndEstimateChanged = null)
     {
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         _getPlayerLeadTime = getPlayerLeadTime ?? (_ => TimeSpan.Zero);
         _getTrackLeadTime = getTrackLeadTime ?? ((_, _) => TimeSpan.Zero);
         _metadataStabilizationDelay = metadataStabilizationDelay ?? DefaultMetadataStabilizationDelay;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _onTrackEndEstimateChanged = onTrackEndEstimateChanged;
         if (_metadataStabilizationDelay < TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(
@@ -82,6 +128,7 @@ public sealed class LyricSyncService : IDisposable
             _lastSearchDuration = null;
             _durationCorrectionConsumed = false;
             _lastEmittedLineIndex = -1;
+            PublishTrackEndEstimate(null);
             return Task.FromResult(new LyricDisplayFrame("", "", "", 0, -1));
         }
 
@@ -99,6 +146,7 @@ public sealed class LyricSyncService : IDisposable
             _lastSearchDuration = null;
             _durationCorrectionConsumed = false;
             _lastEmittedLineIndex = -1;
+            PublishTrackEndEstimate(null);
             StartLyricsUpdate(trackId);
         }
         else
@@ -114,6 +162,7 @@ public sealed class LyricSyncService : IDisposable
                 _currentLyricFetchElapsedMilliseconds = 0;
                 _currentLyricResolvedAtUtc = null;
                 _lastEmittedLineIndex = -1;
+                PublishTrackEndEstimate(null);
                 StartLyricsUpdate(trackId);
             }
         }
@@ -231,6 +280,7 @@ public sealed class LyricSyncService : IDisposable
         CancelPendingSearch();
         _currentTrack = track;
         _currentDocument = document;
+        PublishTrackEndEstimate(ResolveTrackEndEstimate(resolved, document));
         _currentDocumentHasTranslation = document.Lines.Any(
             line => !string.IsNullOrWhiteSpace(line.Translation));
         _currentLyricSourceApp = resolved.ProviderId.Value;
@@ -242,6 +292,46 @@ public sealed class LyricSyncService : IDisposable
         _lastSearchDuration = NormalizeDuration(track.Duration);
         _durationCorrectionConsumed = true;
         return true;
+    }
+
+    /// <summary>
+    /// 更新曲终估计并通知订阅方。值没变时不重复通知——这个方法会被每首歌的
+    /// 解析结果触发，而订阅方（时间轴注册表）在 UI 线程与帧线程之间共享。
+    /// </summary>
+    private void PublishTrackEndEstimate(TimeSpan? estimate)
+    {
+        if (_currentTrackEndEstimate == estimate)
+        {
+            return;
+        }
+
+        _currentTrackEndEstimate = estimate;
+        _onTrackEndEstimateChanged?.Invoke(estimate);
+    }
+
+    /// <summary>
+    /// 算出这份歌词对应的曲终时刻。真实时长优先，其次末行时间加尾奏余量。
+    /// </summary>
+    /// <remarks>
+    /// 末行时间只是「最后一句开口的时刻」，真实曲终至少还要加上这一句唱完的时长
+    /// 和尾奏，所以退化值必然偏短。偏短的后果是「归位偏早」：第二遍开头的
+    /// 几句歌词会领先于声音。这与「永远停在最后一行」相比仍然是更好的失败模式，
+    /// 而且用户可以用单曲偏移把它校回来（偏移按曲目存储，调一次永久生效）。
+    /// </remarks>
+    private static TimeSpan? ResolveTrackEndEstimate(ResolvedLyrics resolved, LyricDocument document)
+    {
+        if (resolved.SourceTrackDuration is { } duration)
+        {
+            return duration;
+        }
+
+        if (document.Lines.Count > 0 &&
+            document.Lines[^1].Timestamp > TimeSpan.Zero)
+        {
+            return document.Lines[^1].Timestamp + EstimatedTailMargin;
+        }
+
+        return null;
     }
 
     private void StartLyricsUpdate(string trackId)
@@ -299,6 +389,7 @@ public sealed class LyricSyncService : IDisposable
                 _currentTrackId == trackId)
             {
                 _currentDocument = document;
+                PublishTrackEndEstimate(ResolveTrackEndEstimate(resolved, document));
                 _currentDocumentHasTranslation = document.Lines.Any(
                     line => !string.IsNullOrWhiteSpace(line.Translation));
                 _currentLyricSourceApp = resolved.ProviderId.Value;

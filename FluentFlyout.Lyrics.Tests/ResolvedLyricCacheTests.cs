@@ -49,6 +49,40 @@ public sealed class ResolvedLyricCacheTests
         Assert.Equal(" ", remembered!.Content.Lines[0].Segments[1].Text);
     }
 
+    /// <summary>
+    /// 歌词源声明的曲长必须跟着缓存一起落盘。
+    ///
+    /// 落了盘，命中缓存的那条路径才能拿到真实曲长；否则每次热启动都会退回
+    /// 「末行 + 尾奏余量」的退化估计，白丢精度——而网易云的播放场景里
+    /// 缓存命中恰恰是常态（同一首歌反复听）。
+    /// </summary>
+    [Fact]
+    public void SourceTrackDurationSurvivesCacheRoundTrip()
+    {
+        using var fixture = CacheFile.Create();
+        var track = CreateTrack("Song", "Artist", "Album", "QQMusic", "track-id", null, TimeSpan.Zero);
+        var resolved = new ResolvedLyrics(
+            new ParsedLyrics(
+                [new ParsedLyricLine(TimeSpan.FromSeconds(10), null, "line")],
+                LyricTimingKind.LineTimed,
+                LyricTimingProvenance.ProviderSupplied,
+                LyricPayloadFormat.Lrc),
+            KnownLyricProviders.QQMusic,
+            "candidate-duration",
+            LyricAcquisitionKind.Remote,
+            new Dictionary<string, string>(),
+            TimeSpan.FromSeconds(243));
+
+        using (var cache = new JsonResolvedLyricCache(fixture.Path))
+        {
+            Assert.True(cache.Store(track, resolved));
+        }
+
+        using var reloaded = new JsonResolvedLyricCache(fixture.Path);
+        Assert.True(reloaded.TryGet(track, out var remembered));
+        Assert.Equal(TimeSpan.FromSeconds(243), remembered!.SourceTrackDuration);
+    }
+
     [Fact]
     public void InvalidTrackIdentityReturnsAStoreFailureReason()
     {

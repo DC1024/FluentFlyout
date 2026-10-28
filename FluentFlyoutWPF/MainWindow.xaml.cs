@@ -85,6 +85,27 @@ public partial class MainWindow : MicaWindow
     /// </summary>
     internal LyricsService? lyricsService;
 
+    /// <summary>
+    /// 当前曲目的整份歌词，由 <see cref="LyricsService.DocumentChanged"/> 更新。
+    ///
+    /// <para>
+    /// 留这一份是为了「任务栏窗口重建后补发」：窗口会被 Explorer 重启 / 换屏 /
+    /// 改设置反复重建，而文档只在换歌时才变。不缓存的话，重建后新控件拿不到
+    /// 文档，宽度就退回「按当前行量」——胶囊又开始随每句胀缩，直到下一首歌。
+    /// </para>
+    /// </summary>
+    private LyricDocument? _currentLyricDocument;
+
+    /// <summary>
+    /// 上面那份文档已经推给哪个控件实例。
+    ///
+    /// <para>
+    /// 用控件引用而不是 bool：任务栏窗口重建后 <c>Widget</c> 是新对象，
+    /// bool 会让新控件永远收不到文档。引用比较天然覆盖「重建」这件事。
+    /// </para>
+    /// </summary>
+    private TaskbarWidgetControl? _lyricDocumentAppliedTo;
+
     private VolumeMixerWindow? volumeMixerWindow;
 
     private readonly DispatcherTimer _displayRefreshTimer;
@@ -1653,6 +1674,8 @@ public partial class MainWindow : MicaWindow
             if (lyricsService is not null)
             {
                 lyricsService.FrameReady -= OnLyricFrameReady;
+                lyricsService.CurrentTrackChanged -= OnLyricCurrentTrackChanged;
+                lyricsService.DocumentChanged -= OnLyricDocumentChanged;
                 lyricsService.Dispose();
                 lyricsService = null;
             }
@@ -2076,6 +2099,7 @@ public partial class MainWindow : MicaWindow
         lyricsService = new LyricsService(GetActiveMediaSession, Dispatcher);
         lyricsService.FrameReady += OnLyricFrameReady;
         lyricsService.CurrentTrackChanged += OnLyricCurrentTrackChanged;
+        lyricsService.DocumentChanged += OnLyricDocumentChanged;
         Logger.Info("Lyrics service created");
 
         return lyricsService;
@@ -2114,7 +2138,56 @@ public partial class MainWindow : MicaWindow
     /// </remarks>
     private void OnLyricFrameReady(object? sender, LyricDisplayFrame frame)
     {
-        taskbarWindow?.Widget.UpdateLyricsFrame(frame);
+        if (taskbarWindow?.Widget is not { } widget)
+        {
+            return;
+        }
+
+        // 先补发文档、再给帧：控件要靠文档里的整首歌词定下这首歌的宽度，
+        // 顺序反了第一句会先按旧宽度排一次版（长句就会「先滚动后变宽」）。
+        EnsureLyricDocumentApplied(widget);
+        widget.UpdateLyricsFrame(frame);
+    }
+
+    /// <summary>
+    /// 把当前文档推给控件——只在「文档换了」或「控件换了」时做一次。
+    /// </summary>
+    /// <remarks>
+    /// 每次换歌都推是必要的：宽度按整首最宽句定，文档一换宽度就该重算。
+    /// 每帧都推则毫无意义——遍历几百行量文本是毫秒级开销，30fps 下会拖垮 UI 线程。
+    /// </remarks>
+    private void EnsureLyricDocumentApplied(TaskbarWidgetControl widget)
+    {
+        if (ReferenceEquals(_lyricDocumentAppliedTo, widget))
+        {
+            return;
+        }
+
+        _lyricDocumentAppliedTo = widget;
+        widget.ApplyLyricDocument(_currentLyricDocument?.Lines);
+    }
+
+    /// <summary>
+    /// 当前曲目的整份歌词换了（换歌、歌词源修正、清空）。
+    /// </summary>
+    /// <remarks>
+    /// 文档在 <c>FrameReady</c> 之前到达，这里推给控件的时机因此早于这首歌的第一帧。
+    /// 窗口不在（启动中 / Explorer 重启中）就只记下来，由
+    /// <see cref="EnsureLyricDocumentApplied"/> 在下一帧补发。
+    /// </remarks>
+    private void OnLyricDocumentChanged(object? sender, LyricDocument? document)
+    {
+        _currentLyricDocument = document;
+
+        if (taskbarWindow?.Widget is not { } widget)
+        {
+            // 清掉「已推送」标记：窗口重建后 Widget 是新对象，必须重推一次。
+            _lyricDocumentAppliedTo = null;
+            return;
+        }
+
+        _lyricDocumentAppliedTo = widget;
+        widget.ApplyLyricDocument(document?.Lines);
     }
 
     /// <summary>

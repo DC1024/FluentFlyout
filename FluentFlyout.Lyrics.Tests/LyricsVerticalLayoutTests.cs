@@ -367,4 +367,60 @@ public sealed class LyricsVerticalLayoutTests
         // 104 / 56 = 1.86 → 2 行。这是**真实需要**的两行，不是膨胀。
         Assert.Equal(2 * 16.51, length, precision: 6);
     }
+
+    // ---------- 主轴长度上限随任务栏长度自适应 ----------
+
+    [Theory]
+    [InlineData(768, 480)]     // 竖屏小屏：一半 384，被下限抬回 480
+    [InlineData(1040, 520)]    // 1080p 竖排
+    [InlineData(1440, 720)]    // 1440p
+    [InlineData(2160, 960)]    // 4K 100% 竖屏：一半 1080 撞天花板 → 960
+    [InlineData(2560, 960)]    // 4K 150% 竖屏
+    [InlineData(3840, 960)]
+    public void ResolveMaxMainAxisLengthTakesHalfOfTaskbarWithFloorAndCeiling(
+        double taskbarLength,
+        double expected)
+    {
+        Assert.Equal(
+            expected,
+            LyricsVerticalLayout.ResolveMaxMainAxisLength(taskbarLength),
+            precision: 6);
+    }
+
+    [Theory]
+    [InlineData(0d)]
+    [InlineData(-100d)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void ResolveMaxMainAxisLengthFallsBackWhenLengthUnknown(double taskbarLength)
+    {
+        // 拿不到任务栏尺寸（UIA 失败、首帧）时行为必须与改动前一致：480。
+        Assert.Equal(
+            LyricsVerticalLayout.DefaultMaxMainAxisLength,
+            LyricsVerticalLayout.ResolveMaxMainAxisLength(taskbarLength),
+            precision: 6);
+    }
+
+    [Fact]
+    public void ResolveMaxMainAxisLengthStaysWithinBounds()
+    {
+        foreach (var taskbarLength in new[] { 200d, 768, 1040, 1440, 2160, 2560, 3840, 4320 })
+        {
+            var cap = LyricsVerticalLayout.ResolveMaxMainAxisLength(taskbarLength);
+
+            Assert.InRange(
+                cap,
+                LyricsVerticalLayout.DefaultMaxMainAxisLength,
+                LyricsVerticalLayout.MaxMainAxisLengthCeiling);
+
+            // 不变量：屏幕够长时不能越过主轴中点——应用按钮集中在正中，
+            // 越过中点就等于把它们盖住。
+            if (taskbarLength >= LyricsVerticalLayout.DefaultMaxMainAxisLength * 2)
+            {
+                Assert.True(
+                    cap <= taskbarLength * LyricsVerticalLayout.MaxMainAxisLengthFraction + 0.5,
+                    $"任务栏 {taskbarLength} 时上限 {cap} 越过了中点");
+            }
+        }
+    }
 }

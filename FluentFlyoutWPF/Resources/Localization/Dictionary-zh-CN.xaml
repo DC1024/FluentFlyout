@@ -308,7 +308,7 @@
     <system:String x:Key="LyricsDescription">在任务栏小组件里显示当前播放歌曲的同步歌词，支持逐字高亮、翻译行与竖向任务栏换行排版。</system:String>
     <system:String x:Key="LyricsRequiresWidgetWarning">歌词显示在任务栏小组件上，请先在上面的「任务栏小组件」里启用它。</system:String>
     <system:String x:Key="LyricsEnabledTitle">在任务栏显示歌词</system:String>
-    <system:String x:Key="LyricsEnabledDescription">用歌词替换小组件里的歌曲标题与艺术家，与频谱可视化互斥</system:String>
+    <system:String x:Key="LyricsEnabledDescription">用歌词替换小组件里的歌曲标题与艺术家，可与频谱可视化同时开启</system:String>
     <system:String x:Key="LyricsFontSizeTitle">歌词字号</system:String>
     <system:String x:Key="LyricsFontSizeDescription">单位为像素。任务栏高度不够时会自动缩小</system:String>
     <system:String x:Key="LyricsShowTranslationTitle">显示翻译行</system:String>
@@ -327,6 +327,7 @@
     <system:String x:Key="LyricsAlignmentRight">右对齐</system:String>
     <system:String x:Key="LyricsOffsetTitle">当前歌曲偏移</system:String>
     <system:String x:Key="LyricsOffsetDescription">正值让歌词提前，负值延后，单位毫秒。按歌曲单独保存</system:String>
+    <system:String x:Key="LyricsTimelineNotice">网易云、酷狗等播放器不向系统报告播放进度，歌词按本次播放的起点计时。从中间续播或拖动进度条后，请用上面的偏移校正。</system:String>
     <system:String x:Key="LyricsVerticalTaskbarNote">竖向任务栏上歌词会自动换行铺满整条任务栏，不会压成单行。</system:String>
     <system:String x:Key="LyricsSourceNote">歌词来自 QQ 音乐、酷狗、网易云与 LRCLIB。首次播放某首歌时需要联网检索，之后会缓存到本地。</system:String>
 </ResourceDictionary>

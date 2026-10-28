@@ -27,6 +27,8 @@ namespace FluentFlyout.Lyrics.Adapter;
 /// </summary>
 internal sealed class FluentFlyoutMusicSessionProvider : IMusicSessionProvider
 {
+    private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
+
     /// <summary>
     /// 时间轴最后更新时刻到采样时刻的最大合理间隔。
     ///
@@ -58,6 +60,39 @@ internal sealed class FluentFlyoutMusicSessionProvider : IMusicSessionProvider
     /// 而帧里只有标题文本。
     /// </summary>
     public TrackInfo? LastTrack { get; private set; }
+
+    /// <summary>
+    /// 接收「当前曲目总长」的估计值，转交给时间轴注册表。
+    ///
+    /// <para>
+    /// 曲长不在这里读：SMTC 的 <c>EndTime</c> 在网易云场景恒为 0，
+    /// 唯一可信的来源是歌词源（QQ 音乐的 interval / Lyricify 的 duration）。
+    /// 所以由歌词层算好推过来，这里只做转发。
+    /// </para>
+    /// </summary>
+    /// <param name="estimate">总长；<c>null</c> 表示未知，本地时钟退回无上限行为。</param>
+    internal void SetTrackEndEstimate(TimeSpan? estimate)
+    {
+        // 这行日志是「单曲循环第二遍起歌词卡在末行」唯一的事后线索：
+        // 曲长只在换歌解析完成时下发一次，拿不到就退回只增不减的旧行为，
+        // 拿到脏值则每帧归零、把歌词锁死在第一行——两种失败的现象都和
+        // 「歌词引擎坏了」一模一样，而日志里没有这行就完全无法区分。
+        // 用 Info 不用 Debug：默认 NLog 配置是 minlevel="Info"。
+        Logger.Info(
+            "Track end estimate for \"{0} - {1}\": {2}{3}",
+            LastTrack?.Title ?? "(no track)",
+            LastTrack?.Artist ?? "(no artist)",
+            estimate is { } duration ? duration.ToString(@"m\:ss") : "unknown",
+            estimate switch
+            {
+                null => " (no source duration and no last line, local clock unbounded)",
+                _ when LocalClockTimelinePositionStrategy.IsPlausibleTrackDuration(estimate)
+                    => " (local clock will rewind at this point)",
+                _ => " (shorter than the plausible minimum, local clock ignores it)",
+            });
+
+        _timelineRegistry.SetTrackEndEstimate(estimate);
+    }
 
     /// <summary>
     /// 通知引擎用户拖动了进度条。返回 true 表示引擎已接管，

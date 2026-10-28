@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 using FluentFlyout.Classes.Settings;
+using System.Windows;
 using System.Windows.Controls;
 
 namespace FluentFlyoutWPF.Pages;
