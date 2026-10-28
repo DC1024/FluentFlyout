@@ -105,8 +105,9 @@ internal static class VerticalWidgetProbe
                         shot.PanelHeight > 0 && shot.PanelHeight <= shot.LogicalHeight + 0.01,
                         $"面板 Height={shot.PanelHeight:F1}，CalculateSize 返回的短边={shot.LogicalHeight:F1}");
 
-                    // 内容长度 > 预算时被 clamp 是**预期行为**（竖排没有滚动），
-                    // 所以下界取两者中较小的那个：真正要防的是「塌成 0」。
+                    // 内容长度 > 预算时被 clamp 是**预期行为**：视口只能占那么长，
+                    // 超出的部分靠面板沿主轴滚动补出来（见 LyricsPanel.VerticalScroll.cs），
+                    // 不再是被裁掉。所以下界取两者中较小的那个：真正要防的是「塌成 0」。
                     var expectedMainAxis = Math.Min(shot.ContentLength, shot.LogicalWidth);
 
                     Check(

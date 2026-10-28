@@ -5,6 +5,7 @@
 
 using System.Windows;
 using System.Windows.Controls;
+using FluentFlyout.Classes.Settings;
 using FluentFlyout.Controls;
 using FluentFlyout.Lyrics.Models;
 
@@ -95,13 +96,54 @@ internal static class LyricsRepositionProbe
                 $"{withoutDocument.Requests} 次 / {withoutDocument.Frames} 帧");
         }
 
+        // 第三组：竖向 + 超长句 + 打开滚动。
+        //
+        // 前两组量的是「换行会不会触发重排」，这一组量的是「**滚动**会不会」。
+        // 位移挂在 RenderTransform 上，理论上不参与 measure/arrange；但竖排的
+        // 长度上报走 VerticalContentLength，一旦哪天有人把「可见部分」也算进
+        // 长度，每帧就会请求一次整窗重排——30fps 下任务栏直接失去响应，
+        // 而这种退化在截图上完全看不出来（图只会显示开头几个字）。
+        var scrolling = Measure(
+            vertical: true,
+            BuildOversizeLines(),
+            useDocument: true,
+            enableScrolling: true);
+
+        Console.WriteLine(
+            $"  竖向长句滚动：{scrolling.Frames} 帧，" +
+            $"末帧位移 {scrolling.LastScrollOffset:F1} DIP，" +
+            $"重排请求 {scrolling.Requests} 次");
+
+        // 防空跑：位移恒为 0 时「重排 0 次」毫无意义——那只能说明滚动
+        // 根本没跑起来（视口算成 0、开关没生效、或者长句其实装得下）。
+        Check(
+            "竖向长句滚动：末帧位移非零（滚动真的跑起来了）",
+            scrolling.LastScrollOffset < -1,
+            $"末帧位移 {scrolling.LastScrollOffset:F1} DIP");
+
+        Check(
+            $"竖向长句滚动：每帧改位移也不引起重排（≤ {MaxRequestsWithDocument} 次）",
+            scrolling.Requests <= MaxRequestsWithDocument,
+            $"{scrolling.Requests} 次 / {scrolling.Frames} 帧");
+
         Console.WriteLine();
         Console.WriteLine(_failures == 0 ? "R1 护栏全部通过" : $"{_failures} 项失败");
         return _failures;
     }
 
     /// <summary>一次测量的结果。请求数按 60s 窗口统计，不含换歌那一次。</summary>
-    private readonly record struct Measurement(int Frames, int Requests, int DocumentRequests);
+    /// <param name="LastScrollOffset">
+    /// 末帧的竖排主轴位移（DIP）。横向、或没开滚动时恒为 0。
+    ///
+    /// 记它只为一件事：让「重排次数为 0」这条断言不至于在滚动根本没跑起来时
+    /// 也全绿。没有这个量，第三组测试在最坏情况下测的是「一个不动的画面
+    /// 不会引起重排」——真话，但毫无价值。
+    /// </param>
+    private readonly record struct Measurement(
+        int Frames,
+        int Requests,
+        int DocumentRequests,
+        double LastScrollOffset);
 
     /// <summary>
     /// 模拟一段播放，统计 <see cref="TaskbarWidgetControl.WidgetWidthStrategyChanged"/>
@@ -112,10 +154,18 @@ internal static class LyricsRepositionProbe
     /// <c>Dispatcher.BeginInvoke(() =&gt; UpdatePosition())</c>，所以「事件次数」
     /// 与「整窗重排次数」是同一件事，而渲染出来的像素与这条判据无关。
     /// </remarks>
-    private static Measurement Measure(bool vertical, IReadOnlyList<LyricLine> lines, bool useDocument)
+    private static Measurement Measure(
+        bool vertical,
+        IReadOnlyList<LyricLine> lines,
+        bool useDocument,
+        bool enableScrolling = false)
     {
         var control = new TaskbarWidgetControl();
         var requests = 0;
+
+        // 长句滚动开关。显式写一遍而不是靠默认值：截图矩阵会临时把它打开，
+        // 同一进程里跑完矩阵再跑这支探针时，默认值已经被改过了。
+        SettingsManager.Current.TaskbarWidgetScrollingEnabled = enableScrolling;
 
         control.WidgetWidthStrategyChanged += (_, _) => requests++;
 
@@ -161,7 +211,11 @@ internal static class LyricsRepositionProbe
                 WordScanProgress: progress));
         }
 
-        return new Measurement(frames, requests - documentRequests, documentRequests);
+        return new Measurement(
+            frames,
+            requests - documentRequests,
+            documentRequests,
+            panel.VerticalScrollOffset);
     }
 
     /// <summary>
@@ -181,6 +235,32 @@ internal static class LyricsRepositionProbe
         {
             var text = i % 2 == 0 ? shortLine : longLine;
             lines[i] = new LyricLine(TimeSpan.FromSeconds(i * SecondsPerLine), $"{text}{i}");
+        }
+
+        return lines;
+    }
+
+    /// <summary>
+    /// 10 句**全长句**的夹具：每一句都排不进主轴预算，位移每帧都在变。
+    /// </summary>
+    /// <remarks>
+    /// 不能用 <see cref="BuildLines"/> 那种长短交替：短句不滚动，一半的帧位移
+    /// 恒为 0，「每帧改位移」这个前提就不成立了。
+    ///
+    /// 10 句刻意**一模一样**（不追加序号）：追加会让每句多一个数字，
+    /// 内容长度从 663 变成 670，末帧位移也就对不上文档里记的 −270.0。
+    /// 这条探针只数重排请求，不依赖句子可区分。
+    /// </remarks>
+    private static LyricLine[] BuildOversizeLines()
+    {
+        const string OversizeLine =
+            "如果这场雨一直下到明天清晨我们是不是就能一直站在这里不分开而我还在等你说好的那句话就算全世界都安静下来";
+
+        var lines = new LyricLine[10];
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            lines[i] = new LyricLine(TimeSpan.FromSeconds(i * SecondsPerLine), OversizeLine);
         }
 
         return lines;
