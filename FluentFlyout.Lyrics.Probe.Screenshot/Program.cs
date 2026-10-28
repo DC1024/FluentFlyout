@@ -83,6 +83,16 @@ internal static class Program
             return VerticalWidgetProbe.Run() == 0 ? 0 : 1;
         }
 
+        // --reposition：只跑「R1 卡顿护栏」（60s 播放的重排请求数）。
+        //
+        // 与视觉矩阵分开的理由同 --assembly：它量的是**调用次数**，
+        // 与像素无关；混进矩阵的退出码里会让「排版坏了」和「重排超预算」
+        // 互相掩盖，而这两类缺陷的修法完全不同。
+        if (args.Any(a => string.Equals(a, "--reposition", StringComparison.OrdinalIgnoreCase)))
+        {
+            return LyricsRepositionProbe.Run() == 0 ? 0 : 1;
+        }
+
         var outputDirectory = Path.Combine(AppContext.BaseDirectory, "shots");
         if (Directory.Exists(outputDirectory))
         {

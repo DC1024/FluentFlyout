@@ -419,7 +419,7 @@ return Math.Min((contentLength + MeasureVerticalLeadIn()) * _scale, maxMainAxisL
 
 | # | 风险 | 严重度 | 落点 | 验证方式 |
 |---|---|---|---|---|
-| R1 | 歌词帧触发整窗重排，30fps 下卡死任务栏 | **高** | 3.1 | 加计数器统计 `UpdatePosition` 调用次数，播放 60s 应 < 20 次；同时开 Nilesoft Shell 实测 |
+| R1 | 歌词帧触发整窗重排，30fps 下卡死任务栏 | **高** | 3.1 | **已建护栏**（见 7.2.9）：`--reposition` 探针模拟 60s 播放数请求数 + 常驻计数器 `RepositionBudget`；竖向换行重排已消除（20 → 0）。真机开 Nilesoft Shell 实测仍待做 |
 | R2 | 逐字扫描每帧重建 Brush 导致掉帧 | **高** | 2.1 `LyricsTextScanner` | `CompositionTarget.Rendering` 打点，目标单帧 < 8ms |
 | R3 | 宽度与系统托盘图标重叠（开「显示所有托盘图标」） | **高** | 3.2 / P3-9 | 手动把托盘图标铺满，检查 `TryPlace` 是否把 widget 挤到可用区间内 |
 | R4 | 竖向任务栏文字方向错乱 / 误用 `RenderTransform` 导致叠字 | 中 | 4.1 / 4.2 | 四方向任务栏逐一截图，先验符号方向；确认歌词用 `LayoutTransform` |
@@ -455,21 +455,24 @@ return Math.Min((contentLength + MeasureVerticalLeadIn()) * _scale, maxMainAxisL
 | #12 | 完成 | `b13fa0c`（竖向初版）+ `086faef`（二次实测修正） |
 | #13 | 进行中 | 截图矩阵已建好（72 张全绿），待归档与 PR |
 
-### 7.2 两个探针，两种用途
+### 7.2 探针：三种用途，不要混用
 
-P3 阶段有两个离屏渲染探针，**用途不同，不要混用**：
+P3 阶段有三个探针入口，**判据完全不同，混在一个退出码里会互相掩盖**：
 
-| 探针 | 用途 | 输入 | 断言数 |
+| 入口 | 用途 | 输入 | 断言数 |
 |---|---|---|---|
 | `Probe.Render` | **几何方案选型**：验证「竖向到底该不该旋转」 | 手工搭的近似视觉树 | 13 |
 | `Probe.Screenshot` | **视觉验收**：渲染真实 `LyricsPanel`，出可归档的图 | mock 帧 + 真实控件 | 72 张 + 8 张整机（含长度恒定、左右镜像） |
+| `Probe.Screenshot --reposition` | **调用次数验收**（R1）：60s 播放请求了多少次整窗重排 | mock 帧 1800 张，不渲染 | 4 |
 
 ```bash
 dotnet run --project FluentFlyout.Lyrics.Probe.Render/Probe.Render.csproj
 dotnet run --project FluentFlyout.Lyrics.Probe.Screenshot/Probe.Screenshot.csproj
+dotnet run --project FluentFlyout.Lyrics.Probe.Screenshot/Probe.Screenshot.csproj -- --assembly
+dotnet run --project FluentFlyout.Lyrics.Probe.Screenshot/Probe.Screenshot.csproj -- --reposition
 ```
 
-两者退出码 0 = 全部断言通过，可直接作为 CI 门禁。
+退出码 0 = 全部断言通过，可直接作为 CI 门禁（`verify` 里是三独立步骤）。
 
 #### 7.2.1 `Probe.Render`：几何选型的两次推翻
 
@@ -704,6 +707,52 @@ DesiredContentWidth 优先返回 _documentMaxWidth，没有文档才回退当前
 备选方案曾有三个：A 只换列序（拉丁词不动）、B 列序 + 拉丁词镜像、C 整块反向旋转
 （文字从下往上但字躺着）。用户看完对照图选了 **B**，并明确要求英文也镜像。
 
+#### 7.2.9 R1 护栏：重排次数要先能数出来
+
+R1 的验收口径是「播放 60s，整窗重排 < 20 次」。这句话在变成可执行的东西之前
+只是一句话，所以顺序是：先建探针 → 修 → 再上常驻计数器。
+
+**探针（`--reposition`）**：真控件 + mock 帧，30fps × 60s = 1800 帧、20 句轮换，
+数 `WidgetWidthStrategyChanged` 的触发次数（生产里它的处理器就是
+`BeginInvoke(UpdatePosition)`，所以两者次数相等）。不渲染像素——这条判据与画面无关。
+
+修之前的第一组数（红）：
+
+| 方向 | 有文档 | 无文档（对照） |
+|---|---|---|
+| 横向 | 0 | 20 |
+| 竖向 | **20** | 20 |
+
+竖向每换一行就请求一次整窗重排，而这 20 次一次都不必要。
+
+**根因**：`ReportDesiredWidth` 用的是横向判据「整首最宽句 → 当前行实测」，
+而竖向的 `_documentMaxWidth` 恒为 0（`RecalculateDocumentWidth` 对竖向直接清零），
+于是每一帧都退回去量当前行；每句长度不同，差值越过 4 DIP 阈值就发一次事件。
+
+**修法**：竖向改报主轴长度（`VerticalContentLength`）。竖排的短边被任务栏钉死、
+没有协商余地，能协商的只有沿主轴的长度，而它在整首歌内恒定。修后竖向有文档 = 0，
+无文档仍是 20——那条路径确实需要换行重排，没有被误伤。
+
+一个坑：探针第一版没给面板写尺寸，竖向的字形树根本没建起来，
+`VerticalContentLength` 恒为 0，「无文档」那组从 20 变成 0，看着像修好了。
+**夹具必须按生产写入短边与主轴长度**，否则这条分组是空断言。
+
+**常驻计数器**：`FluentFlyout.Lyrics/Diagnostics/RepositionBudget`
+（滚动窗口、基线豁免、告警节流，12 个单测）。`UpdatePosition` 现在带来源标签
+（`Timer` / `WidthStrategy` / `Dpi` / `Target` / `MediaUi` / `Startup`），
+超预算时打一条 Warn 并带上分来源次数——「超了」本身不足以定位，得看出是哪一路。
+
+**验收口径要说清**：1.5s 定时器心跳本身就是 40 次/分，把它算进 20 的预算里，
+告警会永远亮着，也就等于没有告警。所以预算只数**非基线**：定时器计数但不计入。
+口径因此是「歌词等事件驱动路径 < 20 次/分」，而不是「总量」。
+要把总量也压下去得动心跳策略（廉价环境签名 + 占用区降频刷新），那是行为变更，
+需要真机验证，单独排（见 §8）。
+
+**顺带修的一处**：`CalculateAndSetPosition` 撞上「正在排」时原来是**丢弃**，
+现在记下来源、这一轮结束后补跑一次。丢弃在轮询时代没问题（1.5s 后还会来），
+但歌词路径是事件驱动的：换歌那次请求恰好落在一次 UIA 慢查询里就会被吞掉，
+表现为「新宽度要等 1.5s 才生效」，而日志里一条错误都没有。
+
 ### 7.3 归档截图
 
 `Probe.Screenshot` 每次生成 72 张（另有 `--assembly` 的 8 张整机图），代表性
@@ -737,4 +786,20 @@ V 两张是**边位**的样本，也是 7.2.8 的人工验收依据：左右两�
 `Probe.Screenshot --assembly` 的 `RenderSideBySide()` 生成，改完贴边判定后要
 重新跑一次并覆盖归档，否则文档会比代码旧。
 
+---
 
+## 8. 下一步
+
+R1 还剩两半，都不适合与这一轮一起改：
+
+| 项 | 为什么单独排 | 怎么验 |
+|---|---|---|
+| **R1b 心跳降频** | 1.5s 定时器那 40 次/分是既有基线。压下去要改轮询策略：先算一个廉价环境签名（任务栏句柄 + 矩形 + 显示器数 + DPI），签名没变就跳过整轮；占用区（Widgets 按钮 / 托盘）的 UIA 查询降到 5s 一次。这属于**行为变更**——托盘图标变化后小组件避让会慢几秒，得真机看过才敢合 | 本地开 Nilesoft Shell + Windhawk，播 60s 看 `RepositionBudget.Summarize()`；再把托盘图标从 3 个加到 10 个，确认避让仍然发生（允许 5s 内） |
+| **R1c 真机复测** | 探针推的是 mock 帧；真实 SMTC 帧的到达节奏取决于播放器（有的 1s 才推一次），只有真机能验 | 开 Nilesoft Shell 播一小时，`%APPDATA%\FluentFlyout\` 的日志里不该出现 `repositioned` 的 Warn |
+
+其余待办，顺序按 2026-10-28 定下的：
+
+- **karaoke 逐字点亮**（视觉效果，用户指定放最后）；
+- **竖排超长句**的截断/滚动策略（现在不滚，超出预算即被裁）；
+- **手工矩阵**：四方向任务栏 × 三种 DPI × 深浅主题；
+- **README** 里的歌词说明（截图 + 设置项）。

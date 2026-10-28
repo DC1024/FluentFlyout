@@ -295,6 +295,15 @@ jobs:
         working-directory: FluentFlyout.Lyrics.Probe.Screenshot
         run: dotnet run -c Release --no-build -- --assembly
 
+      # R1 卡顿护栏：模拟 60s 播放，数歌词路径请求了多少次整窗重排。
+      #
+      # 这条判据与像素无关，坏起来在截图上**完全看不出来**——小组件画得
+      # 一模一样，只是每次换行都偷偷 SetWindowPos + UIA 查询一次。这类回归
+      # 只能靠计数抓，所以单独一步、单独一个退出码。
+      - name: R1 重排预算（60s 播放的请求次数）
+        working-directory: FluentFlyout.Lyrics.Probe.Screenshot
+        run: dotnet run -c Release --no-build -- --reposition
+
       # 把断言汇总写进 Job Summary，评审人不必下载 artifact
       - name: 汇总到 Job Summary
         if: always()
