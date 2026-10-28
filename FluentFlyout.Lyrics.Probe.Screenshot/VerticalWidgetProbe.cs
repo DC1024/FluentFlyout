@@ -130,8 +130,235 @@ internal static class VerticalWidgetProbe
         }
 
         Console.WriteLine();
+        Console.WriteLine("--- 长度恒定（真机反馈：长度会随歌词长度变化）---");
+        CheckConstantLength();
+
+        Console.WriteLine();
+        Console.WriteLine("--- 左侧任务栏：列序镜像 ---");
+        CheckMirrorSide();
+
+        Console.WriteLine();
+        Console.WriteLine("--- 对照图（左贴边 vs 右贴边）---");
+        RenderSideBySide();
+
+        Console.WriteLine();
         Console.WriteLine(_failures == 0 ? "整机装配链全部通过" : $"{_failures} 项失败");
         return _failures;
+    }
+
+    /// <summary>夹具里的短句。</summary>
+    private const string ShortLine = "短句";
+
+    /// <summary>夹具里的长句：30 多个字，一列排开约 430 DIP。</summary>
+    private const string LongLine = "这一句长得多，一列能装下三十多个字，正好把整首歌的最长长度顶出来";
+
+    /// <summary>
+    /// 校验「同一首歌内小组件长度恒定」。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 这条来自真机反馈：「长度问题，会随着歌词长度变化而变化」。根因是面板把
+    /// **当前行**的长度当成整首歌的长度（<c>VerticalContentLength</c> 直接返回
+    /// 本行的逐字步进总和），于是每换一句小组件就换一个长度。横向早就有
+    /// 「整首最宽一句」那一层，竖向漏了对称的一层。
+    /// </para>
+    /// <para>
+    /// 判据分三档，少一档就测不出东西：
+    /// <list type="number">
+    /// <item>有文档：短句与长句的长度**相同**——修复本身；</item>
+    /// <item>有文档：长度按**最长**那句撑开——防止「两边都取最小值」也判绿；</item>
+    /// <item>无文档：短句与长句**不同**——对照组，证明这个夹具确实能区分两者，
+    /// 而不是无论怎么改都通过。</item>
+    /// </list>
+    /// </para>
+    /// </remarks>
+    private static void CheckConstantLength()
+    {
+        var document = new[]
+        {
+            new LyricLine(TimeSpan.Zero, ShortLine),
+            new LyricLine(TimeSpan.FromSeconds(5), LongLine),
+        };
+
+        var withDocument = MeasureBothLines(document);
+        var withoutDocument = MeasureBothLines(null);
+
+        Check(
+            "长度恒定：换句不改变小组件长度",
+            Math.Abs(withDocument.Short - withDocument.Long) <= 0.5,
+            $"短句={withDocument.Short:F1}，长句={withDocument.Long:F1}");
+
+        Check(
+            "长度恒定：长度按最长一句撑开（不是取最小值）",
+            withDocument.Long > withoutDocument.Short + 1,
+            $"有文档长句={withDocument.Long:F1}，无文档短句={withoutDocument.Short:F1}");
+
+        Check(
+            "长度恒定：无文档时长度仍随句子变化（对照）",
+            Math.Abs(withoutDocument.Short - withoutDocument.Long) > 1,
+            $"无文档短句={withoutDocument.Short:F1}，无文档长句={withoutDocument.Long:F1}");
+    }
+
+    /// <summary>
+    /// 校验「任务栏贴左侧时两列左右镜像」。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 判据只看墨迹的左右分布：主行 30 字、次要行 13 字，两列墨迹量差一倍以上，
+    /// 所以「哪一半更厚」就等于「主列在哪一半」。这比截图目视可靠——
+    /// 目视在 40 DIP 宽的图上很容易把两列看反。
+    /// </para>
+    /// <para>
+    /// 第三条判据（长度不变）是防止镜像顺手把尺寸也改了：镜像只该换列的位置，
+    /// 不该换内容占多长。真机上这条错位会表现为「切任务栏边时胶囊跳一下」。
+    /// </para>
+    /// </remarks>
+    private static void CheckMirrorSide()
+    {
+        var frame = new LyricDisplayFrame(
+            CurrentLine: "如果这场雨一直下到明天清晨我们是不是就能一直站在这里不分开",
+            NextLine: "而你说好要陪我走完这条街",
+            Title: "测试曲目",
+            LineProgress: 0.3);
+
+        var right = Render(isDark: false, LyricsMetricsPolicy.DefaultTaskbarCrossSize, 1.0, frame, mirrored: false);
+        var left = Render(isDark: false, LyricsMetricsPolicy.DefaultTaskbarCrossSize, 1.0, frame, mirrored: true);
+
+        Check(
+            "右侧任务栏：主列在屏幕右半",
+            right.RightInkPixels > right.LeftInkPixels,
+            $"右半={right.RightInkPixels}px，左半={right.LeftInkPixels}px");
+
+        Check(
+            "左侧任务栏：主列移到屏幕左半（左右镜像）",
+            left.LeftInkPixels > left.RightInkPixels,
+            $"左半={left.LeftInkPixels}px，右半={left.RightInkPixels}px");
+
+        Check(
+            "镜像只换列序，不改长度",
+            Math.Abs(left.LogicalWidth - right.LogicalWidth) <= 0.5,
+            $"左侧={left.LogicalWidth:F1}，右侧={right.LogicalWidth:F1}");
+    }
+
+    /// <summary>
+    /// 生成「左贴边 / 右贴边」对照图，供人工确认朝向。
+    /// </summary>
+    /// <remarks>
+    /// 夹具刻意混了一个拉丁词（<c>screen</c>）与一行译文：左侧任务栏下
+    /// 要同时看到「主列贴屏幕边缘」和「英文词翻 180°」，两者缺一都不算对。
+    /// </remarks>
+    private static void RenderSideBySide()
+    {
+        var frame = new LyricDisplayFrame(
+            CurrentLine: "如果 screen 这场雨",
+            NextLine: string.Empty,
+            Title: "测试曲目",
+            LineProgress: 0.4,
+            CurrentTranslation: "if the rain stays",
+            HasTrackTranslation: true);
+
+        const double Scale = 2.5;
+
+        var right = Render(isDark: true, LyricsMetricsPolicy.DefaultTaskbarCrossSize, Scale, frame, mirrored: false);
+        var left = Render(isDark: true, LyricsMetricsPolicy.DefaultTaskbarCrossSize, Scale, frame, mirrored: true);
+
+        var stripWidth = right.Bitmap.PixelWidth;
+        var gap = 96.0;
+        var labelHeight = 30.0;
+
+        var canvas = new Canvas
+        {
+            Width = (stripWidth * 2) + gap,
+            Height = Math.Max(right.Bitmap.PixelHeight, left.Bitmap.PixelHeight) + labelHeight,
+            Background = new SolidColorBrush(Color.FromRgb(0xEE, 0xF2, 0xF7)),
+        };
+
+        AddStrip(canvas, left.Bitmap, 0, "任务栏贴左侧");
+        AddStrip(canvas, right.Bitmap, stripWidth + gap, "任务栏贴右侧");
+
+        var composed = new RenderTargetBitmap(
+            (int)Math.Ceiling(canvas.Width),
+            (int)Math.Ceiling(canvas.Height),
+            96,
+            96,
+            PixelFormats.Pbgra32);
+
+        composed.Render(canvas);
+
+        var path = Path.Combine(AppContext.BaseDirectory, "assembly", "side-by-side.png");
+        SavePng(composed, path);
+
+        Console.WriteLine($"  对照图：{path}");
+    }
+
+    /// <summary>把一条竖向任务栏截图贴到对照图上，并在下方写标签。</summary>
+    private static void AddStrip(Canvas canvas, BitmapSource bitmap, double left, string label)
+    {
+        var image = new Image
+        {
+            Source = bitmap,
+            Width = bitmap.PixelWidth,
+            Height = bitmap.PixelHeight,
+            Stretch = Stretch.Fill,
+        };
+
+        Canvas.SetLeft(image, left);
+        Canvas.SetTop(image, 0);
+        canvas.Children.Add(image);
+
+        var text = new TextBlock
+        {
+            Text = label,
+            FontSize = 13,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x33, 0x41, 0x55)),
+            Width = bitmap.PixelWidth,
+            TextAlignment = TextAlignment.Center,
+        };
+
+        Canvas.SetLeft(text, left);
+        Canvas.SetTop(text, bitmap.PixelHeight + 8);
+        canvas.Children.Add(text);
+
+        Arrange(canvas, canvas.Width, canvas.Height);
+    }
+
+    /// <summary>同一份文档下，分别量短句与长句时小组件占的主轴长度。</summary>
+    private static (double Short, double Long) MeasureBothLines(IReadOnlyList<LyricLine>? document)
+    {
+        // 上限刻意放宽到 900：预算若卡在 400，长句会被 clamp，短句与长句
+        // 都被压到同一个上限值，用例会在「看起来通过」的情况下什么也没测到。
+        const double Budget = 900;
+
+        var control = new TaskbarWidgetControl();
+        control.SetLyricsMode(true);
+
+        var panel = (LyricsPanel)control.FindName("LyricsPanel")!;
+        panel.ApplyWindowsTheme(isDark: false);
+        panel.SetActive(true);
+
+        // 文档必须在第一帧之前给：生产里装配层就是在同一次 FrameReady 里
+        // 先给文档、再给帧。
+        control.ApplyLyricDocument(document);
+        control.SetVerticalMode(true);
+
+        return (MeasureOneLine(control, panel, ShortLine, Budget),
+                MeasureOneLine(control, panel, LongLine, Budget));
+    }
+
+    /// <summary>喂一帧，按生产的「两遍布局」量出这一帧下的小组件长度。</summary>
+    private static double MeasureOneLine(
+        TaskbarWidgetControl control, LyricsPanel panel, string line, double budget)
+    {
+        // 下一行留空：否则次要列会画出「下一行预览」，
+        // 无文档那一档的短句长度会被预览撑长，对照组就失效了。
+        panel.ApplyFrame(new LyricDisplayFrame(line, string.Empty, "测试曲目", 0.1));
+
+        // 单位陷阱：MeasureDesiredWidth 返回视觉 DIP，CalculateSize 的
+        // availableWidth 收的也是视觉 DIP，中间不能乘 _scale。
+        var desired = control.MeasureDesiredWidth(budget);
+        var (logicalWidth, _) = control.CalculateSize(dpiScale: 1.0, availableWidth: desired);
+
+        return logicalWidth;
     }
 
     private static string Describe(Rect rect) => rect.IsEmpty
@@ -139,7 +366,12 @@ internal static class VerticalWidgetProbe
         : $"({rect.Left:F0},{rect.Top:F0}) {rect.Width:F0}×{rect.Height:F0}";
 
     /// <summary>渲染一张：真控件 + 生产取尺寸 + 生产那层 +90 旋转。</summary>
-    private static Shot Render(bool isDark, double crossSize, double dpiScale, LyricDisplayFrame frame)
+    /// <param name="mirrored">
+    /// 任务栏是否贴在屏幕左侧。true 时走生产里 <c>SetVerticalMirror</c> 那条路，
+    /// 主列应当贴屏幕边缘而不是屏幕中间。
+    /// </param>
+    private static Shot Render(
+        bool isDark, double crossSize, double dpiScale, LyricDisplayFrame frame, bool mirrored = false)
     {
         var control = new TaskbarWidgetControl();
 
@@ -161,6 +393,11 @@ internal static class VerticalWidgetProbe
         panel.SetActive(true);
 
         control.SetVerticalMode(true);
+
+        // 与生产的调用次序一致：TaskbarWindow.PositionWidget 先 SetVerticalMode，
+        // 紧接着 SetVerticalMirror，然后才算尺寸。反过来的话首帧会按未镜像
+        // 的列位置建树，要等下一轮 1.5s 定时器才纠正。
+        control.SetVerticalMirror(mirrored);
 
         // 生产是「两遍布局」：先问想要多长（MeasureDesiredWidth），
         // 再拿任务栏实测区间回压（CalculateSize 的 availableWidth）。
@@ -239,12 +476,14 @@ internal static class VerticalWidgetProbe
             }
         }
 
-        var (ink, bounds) = MeasureInk(bitmap, background, panelRect, dpiScale);
+        var ink = MeasureInk(bitmap, background, panelRect, dpiScale);
 
         return new Shot(
             bitmap,
-            ink,
-            bounds,
+            ink.Pixels,
+            ink.LeftPixels,
+            ink.RightPixels,
+            ink.Bounds,
             panelRect,
             panel.Width,
             panel.Height,
@@ -272,7 +511,7 @@ internal static class VerticalWidgetProbe
     /// 与主矩阵一致，先反预乘再比亮度：<c>RenderTargetBitmap</c> 的目标格式是
     /// <c>Pbgra32</c>，半透明边界像素的 RGB 已被 alpha 压过，直接比会误判。
     /// </remarks>
-    private static (int Pixels, Rect Bounds) MeasureInk(
+    private static InkStats MeasureInk(
         BitmapSource bitmap, SolidColorBrush background, Rect panelRect, double dpiScale)
     {
         var width = bitmap.PixelWidth;
@@ -292,7 +531,14 @@ internal static class VerticalWidgetProbe
         right = Math.Min(right, width - 1);
         bottom = Math.Min(bottom, height - 1);
 
+        // 左右半区的分界线取**面板矩形**的中线而不是整图中线：
+        // 整机里还有封面与播放按钮，按整图分会把它们算进来。
+        var midX = panelRect.IsEmpty
+            ? (left + right) / 2
+            : (int)Math.Round((panelRect.Left + (panelRect.Width / 2)) * dpiScale);
+
         var count = 0;
+        var leftCount = 0;
         var minX = int.MaxValue;
         var minY = int.MaxValue;
         var maxX = int.MinValue;
@@ -322,6 +568,11 @@ internal static class VerticalWidgetProbe
                 }
 
                 count++;
+                if (x < midX)
+                {
+                    leftCount++;
+                }
+
                 if (x < minX) minX = x;
                 if (x > maxX) maxX = x;
                 if (y < minY) minY = y;
@@ -333,8 +584,15 @@ internal static class VerticalWidgetProbe
             ? Rect.Empty
             : new Rect(minX, minY, maxX - minX + 1, maxY - minY + 1);
 
-        return (count, bounds);
+        return new InkStats(count, leftCount, count - leftCount, bounds);
     }
+
+    /// <summary>墨迹统计：总数 + 左右半区分布 + 包围盒。</summary>
+    /// <remarks>
+    /// 左右分布是「哪一列是主列」在像素上的唯一证据：主列字数多、墨迹厚，
+    /// 只要主列在哪边是确定的，两半的墨迹量就会明显偏斜。
+    /// </remarks>
+    private readonly record struct InkStats(int Pixels, int LeftPixels, int RightPixels, Rect Bounds);
 
     private static void SavePng(BitmapSource bitmap, string path)
     {
@@ -360,6 +618,8 @@ internal static class VerticalWidgetProbe
     private sealed record Shot(
         BitmapSource Bitmap,
         int InkPixels,
+        int LeftInkPixels,
+        int RightInkPixels,
         Rect InkBounds,
         Rect PanelRect,
         double PanelWidth,

@@ -4,6 +4,7 @@
 // 本文件为本仓库新增，不源自 TaskbarLyrics。
 
 using FluentFlyout.Lyrics.Layout;
+using FluentFlyout.Lyrics.Models;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -47,6 +48,13 @@ namespace FluentFlyout.Controls;
 /// </para>
 ///
 /// <para>
+/// <b>左右镜像。</b>任务栏贴在屏幕左侧时，整块排版左右对调：主列从
+/// 「贴屏幕中间」改成「贴屏幕边缘」，侧躺的拉丁词翻 180°（字顶朝左、
+/// 从下往上读）。方块字不镜像——镜像会把汉字左右翻转成另一个字。
+/// 入口是 <see cref="SetVerticalMirror"/>。
+/// </para>
+///
+/// <para>
 /// <b>两列是硬约束，不是偏好。</b>列距 = 行距 = <c>1.33 × 字号</c>，
 /// 两列要 <c>2.66 × 字号</c>：字号 13 时 34.6 DIP ≤ 37.5 DIP（默认字号刚好），
 /// 字号 16 时 42.6 DIP 就超了，只能留主列。这不是 bug，是竖排的几何事实
@@ -70,13 +78,51 @@ public partial class LyricsPanel
     /// 一列最多几十个字，每个字都 new 一个 <see cref="RotateTransform"/> 会让
     /// 每次换行多出几十个 Freezable；冻结后共享同一个实例，WPF 只维护一份。
     /// </summary>
-    private static readonly RotateTransform UprightRotation = CreateUprightRotation();
+    private static readonly RotateTransform UprightRotation = CreateUprightRotation(-90);
+
+    /// <summary>
+    /// 左侧任务栏下侧躺单词用的旋转（180°）。
+    ///
+    /// <para>
+    /// 右侧任务栏时拉丁词**不转**，叠上宿主的 +90 就是「字顶朝屏幕右」——
+    /// 歪头向右读。左侧任务栏是镜像的，同一个词要转 180°（净 −90°），
+    /// 变成「字顶朝屏幕左、从下往上读」，从屏幕中间往左看正好是顺的。
+    /// </para>
+    /// <para>
+    /// 为什么是转 180° 而不是水平镜像：镜像会把字母本身左右翻转
+    /// （<c>screen</c> 变成形似反写的记号），那条路读不出来。
+    /// 转 180° 只改变「朝哪边躺、往哪边读」，字母形状仍然正确。
+    /// </para>
+    /// </summary>
+    private static readonly RotateTransform MirroredLatinRotation = CreateUprightRotation(180);
 
     /// <summary>竖排里属于主行的字形块。配色变化要跟着重涂，所以留引用。</summary>
     private readonly List<TextBlock> _verticalPrimaryBlocks = new();
 
     /// <summary>竖排里属于次要行的字形块（译文或下一行预览）。</summary>
     private readonly List<TextBlock> _verticalSecondaryBlocks = new();
+
+    /// <summary>
+    /// 竖排是否左右镜像（任务栏贴在屏幕**左侧**时为 true）。
+    ///
+    /// <para>
+    /// 镜像只动两件事，别的都不动：
+    /// <list type="bullet">
+    /// <item><b>两列的左右顺序</b>——主列从「贴屏幕中间」改成「贴屏幕边缘」，
+    /// 见 <see cref="BuildVerticalTree"/>；</item>
+    /// <item><b>拉丁词的躺向</b>——从「字顶朝右」翻成「字顶朝左」，
+    /// 见 <see cref="BuildVerticalColumn"/>。</item>
+    /// </list>
+    /// 方块字**不镜像**：镜像会把汉字左右翻转，那是另一个字，不是排版。
+    /// </para>
+    /// <para>
+    /// 坐标映射本身不随贴边变化（宿主恒挂 +90），变的是「哪一侧算屏幕外侧」：
+    /// 右侧任务栏时屏幕外侧在面板的小 y，左侧任务栏时在大 y。
+    /// 真机反馈正是后者没处理——左侧任务栏下主列仍然贴着屏幕中间，
+    /// 与右侧任务栏看起来不是镜像关系。
+    /// </para>
+    /// </summary>
+    private bool _verticalMirrored;
 
     /// <summary>
     /// 上一次建树时的输入。与当前输入逐项相等就跳过重建。
@@ -99,6 +145,21 @@ public partial class LyricsPanel
     /// <summary>最近一次建树算出的主轴长度（DIP）。0 表示无内容。</summary>
     private double _verticalContentLength;
 
+    /// <summary>
+    /// 整首歌里最长的一列（DIP），0 表示还没有文档。
+    ///
+    /// <para>
+    /// 与横向的 <c>_documentMaxWidth</c> 对称：小组件的主轴长度按它定，
+    /// <b>歌内不再变</b>。原先 <see cref="VerticalContentLength"/> 直接返回
+    /// 当前行的长度，于是每换一句小组件就换一个长度——真机反馈的
+    /// 「长度随歌词长度变化」就是它。
+    /// </para>
+    /// </summary>
+    private double _verticalDocumentLength;
+
+    /// <summary>上一次量整首长度时的输入。与当前输入相等就跳过重算。</summary>
+    private VerticalDocumentKey? _verticalDocumentKey;
+
     /// <summary>已经为「短边还没写入」打过日志。只打一次，避免每轮布局刷屏。</summary>
     private bool _verticalCrossWarned;
 
@@ -106,11 +167,48 @@ public partial class LyricsPanel
     private double _verticalDropWarnedFontSize = -1;
 
     /// <summary>
+    /// 设置竖排是否左右镜像。任务栏贴在屏幕左侧时由宿主传入 true。
+    /// </summary>
+    /// <remarks>
+    /// 值没变时直接返回：宿主每次 <c>UpdatePosition</c>（1.5s 定时器 + 每次换行）
+    /// 都会调到这里，无条件重建等于每次换行多排一遍 50 个字形块。
+    ///
+    /// <para>
+    /// 变了的处理是「把两个键清掉」而不是立即重建：此刻短边可能还没被宿主
+    /// 写入（切方向的那一帧），当场重建会按旧短边决定列数。清键之后，
+    /// 下一次读 <see cref="VerticalContentLength"/> 或 <c>SizeChanged</c>
+    /// 就会用新短边重建。
+    /// </para>
+    /// </remarks>
+    public void SetVerticalMirror(bool mirrored)
+    {
+        if (_verticalMirrored == mirrored)
+        {
+            return;
+        }
+
+        _verticalMirrored = mirrored;
+        _verticalKey = null;
+        _verticalDocumentKey = null;
+
+        if (_isVertical)
+        {
+            EnsureVerticalLayout();
+        }
+    }
+
+    /// <summary>
     /// 竖排内容沿主轴（屏幕纵向）需要的长度（DIP），供宿主决定小组件占多长。
     ///
     /// <para>
     /// 与横向的 <see cref="DesiredContentWidth"/> 对称：横向协商宽度、
     /// 竖向协商长度，两个方向各有一个「内容要多大」的出口。
+    /// </para>
+    /// <para>
+    /// <b>优先返回「整首歌最长的一列」</b>（见 <see cref="_verticalDocumentLength"/>），
+    /// 只有文档还没到（刚切到歌词模式、纯音乐、没搜到词）时才退回当前行长度。
+    /// 这条优先级是「小组件长度不随换句伸缩」的落点：宿主拿到的长度在
+    /// 同一首歌里恒定。
     /// </para>
     /// <para>
     /// 返回 0 表示「不在竖向」「还没度量」或「短边还没由宿主写入」——
@@ -130,9 +228,72 @@ public partial class LyricsPanel
                 return 0;
             }
 
+            // 当前行的树是真正画出来的内容，也是「没有文档」时的兜底长度，
+            // 所以先建它；整首长度只是把「该占多长」抬到全曲最大值。
             EnsureVerticalLayout();
-            return _verticalContentLength;
+
+            var documentLength = ResolveVerticalDocumentLength();
+            return documentLength > 0 ? documentLength : _verticalContentLength;
         }
+    }
+
+    /// <summary>
+    /// 量出整首歌里最长的一列（DIP）。输入没变则返回缓存。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 判据与 <see cref="BuildVerticalTree"/> 保持一致：
+    /// <list type="bullet">
+    /// <item>短边放不下两列（<c>2.66 × 字号</c>）、单行模式、或用户关掉翻译时，
+    /// 译文根本不画，**不能**把它算进长度，否则小组件会为一列看不见的字留白。</item>
+    /// <item>没有译文时会画「下一行预览」，而预览文本本身就是另一句的主行，
+    /// 不可能长过主行的最大值——所以只量主行就够，不必为预览单开一路。</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// 这是「长度恒定」的唯一来源：宿主 <c>CalculateSize</c> 与
+    /// <c>MeasureDesiredWidth</c> 读的都是 <see cref="VerticalContentLength"/>，
+    /// 这个值在同一首歌里不随当前行变化。
+    /// </para>
+    /// </remarks>
+    private double ResolveVerticalDocumentLength()
+    {
+        if (!_hasMetrics || _documentLines is not { Count: > 0 })
+        {
+            return 0;
+        }
+
+        var cross = ResolveVerticalCross();
+        if (cross <= 0)
+        {
+            return 0;
+        }
+
+        var primaryFontSize = PrimaryText.FontSize;
+        var secondaryFontSize = SecondaryText.FontSize;
+
+        var includeTranslation =
+            !_metrics.IsSingleLine &&
+            ShowTranslation &&
+            ColumnPitch(primaryFontSize) + ColumnPitch(secondaryFontSize) <= cross;
+
+        var key = new VerticalDocumentKey(
+            _documentLines, primaryFontSize, secondaryFontSize, cross, includeTranslation);
+
+        if (_verticalDocumentKey == key)
+        {
+            return _verticalDocumentLength;
+        }
+
+        _verticalDocumentKey = key;
+        _verticalDocumentLength = VerticalDocumentLength.MeasureMaxColumnLength(
+            _documentLines,
+            run => MeasureVerticalRun(run, primaryFontSize, PrimaryText.FontWeight),
+            includeTranslation
+                ? run => MeasureVerticalRun(run, secondaryFontSize, SecondaryText.FontWeight)
+                : null);
+
+        return _verticalDocumentLength;
     }
 
     /// <summary>
@@ -173,7 +334,8 @@ public partial class LyricsPanel
         var primaryFontSize = PrimaryText.FontSize;
         var secondaryFontSize = SecondaryText.FontSize;
 
-        var key = new VerticalBuildKey(primary, secondary, primaryFontSize, secondaryFontSize, cross);
+        var key = new VerticalBuildKey(
+            primary, secondary, primaryFontSize, secondaryFontSize, cross, _verticalMirrored);
         if (_verticalKey == key)
         {
             return;
@@ -223,9 +385,8 @@ public partial class LyricsPanel
     /// <list type="number">
     /// <item><b>几列</b>：译文非空且两列列距之和放得进短边 → 两列，否则一列；
     /// 放不下时丢掉译文而不是压字号，理由见 <see cref="VerticalColumnPitchFactor"/>。</item>
-    /// <item><b>哪列在哪边</b>：主列在短边的小 y 一侧，译文在大 y 一侧。
-    /// 面板 +y 映射到屏幕 −x，所以主列落在屏幕上靠右，译文在其左——
-    /// 与中文竖排「先读右列」的顺序一致。</item>
+    /// <item><b>哪列在哪边</b>：由任务栏贴哪一侧决定，见
+    /// <see cref="_verticalMirrored"/> 与下方 <c>primaryTop</c> 的注释。</item>
     /// </list>
     /// </summary>
     private double BuildVerticalTree(
@@ -258,12 +419,22 @@ public partial class LyricsPanel
         // 不居中会贴着短边的一侧、与任务栏边缘打架。
         var top = Math.Max((cross - totalCross) / 2, 0);
 
+        // 面板 +y 映射到屏幕 −x（宿主挂的是 +90），所以**y 小的在屏幕右、y 大的在屏幕左**。
+        // 两列的顺序因此只由一条决定：主列要不要贴屏幕边缘。
+        //   右侧任务栏：主列在小 y（屏幕上靠右，贴屏幕边缘），译文在其左
+        //               —— 先读右列，与中文竖排一致；
+        //   左侧任务栏：镜像，主列在大 y（屏幕上靠左，贴屏幕边缘），译文在其右
+        //               —— 真机反馈要的就是这一版：主列离开屏幕中间、贴边，
+        //                  英文单词也跟着翻 180°（见 BuildVerticalColumn）。
+        var primaryTop = _verticalMirrored && twoColumns ? top + secondaryPitch : top;
+        var secondaryTop = _verticalMirrored ? top : top + primaryPitch;
+
         var primaryLength = BuildVerticalColumn(
-            primary, primaryFontSize, primaryPitch, top, isPrimary: true);
+            primary, primaryFontSize, primaryPitch, primaryTop, isPrimary: true);
 
         var secondaryLength = twoColumns
             ? BuildVerticalColumn(
-                secondary, secondaryFontSize, secondaryPitch, top + primaryPitch, isPrimary: false)
+                secondary, secondaryFontSize, secondaryPitch, secondaryTop, isPrimary: false)
             : 0;
 
         return Math.Max(primaryLength, secondaryLength);
@@ -291,13 +462,10 @@ public partial class LyricsPanel
             // 每格的步进按**自己的实测宽度**算，不用字号：
             // 汉字是 1em，空格只有 0.33em，标点各有各的宽度。
             // 一律按字号算会让空格变成一个大豁口。
-            var advance = MeasureText(run.Text, fontSize, source.FontWeight);
-
-            if (advance <= 0)
-            {
-                // 量不出来（零宽字符、字体缺字）也别让后继字形叠在一起。
-                advance = fontSize * 0.2;
-            }
+            //
+            // 与「整首歌最长一列」共用 MeasureVerticalRun：两处的兜底规则
+            // 一旦分叉，量的长度与实际排出来的长度会差出几个字。
+            var advance = MeasureVerticalRun(run.Text, fontSize, source.FontWeight);
 
             var block = new TextBlock
             {
@@ -348,6 +516,14 @@ public partial class LyricsPanel
                 block.RenderTransformOrigin = new Point(0.5, 0.5);
                 block.RenderTransform = UprightRotation;
             }
+            else if (_verticalMirrored)
+            {
+                // 侧躺的拉丁词在左侧任务栏下要翻 180°：字顶从「朝屏幕右」
+                // 变成「朝屏幕左」，于是从屏幕中间往左看是顺的。
+                // 右侧任务栏保持不转（宿主 +90 本身就是「字顶朝右」）。
+                block.RenderTransformOrigin = new Point(0.5, 0.5);
+                block.RenderTransform = MirroredLatinRotation;
+            }
 
             Canvas.SetLeft(block, x);
             Canvas.SetTop(block, top);
@@ -362,6 +538,22 @@ public partial class LyricsPanel
 
     /// <summary>列距：一列占用的短边宽度（DIP）。</summary>
     private static double ColumnPitch(double fontSize) => fontSize * VerticalColumnPitchFactor;
+
+    /// <summary>
+    /// 量一个排版格沿主轴的步进（DIP），零宽时给一个下限。
+    ///
+    /// <para>
+    /// 唯一的兜底规则：量不出来（零宽字符、字体缺字、字号为 0）时按
+    /// <c>0.2 × 字号</c> 走一步，否则后继字形会叠在同一处。
+    /// 排字（<see cref="BuildVerticalColumn"/>）与量整首长度
+    /// （<see cref="ResolveVerticalDocumentLength"/>）必须共用它。
+    /// </para>
+    /// </summary>
+    private double MeasureVerticalRun(string run, double fontSize, FontWeight fontWeight)
+    {
+        var advance = MeasureText(run, fontSize, fontWeight);
+        return advance > 0 ? advance : fontSize * 0.2;
+    }
 
     /// <summary>
     /// 把配色同步到已经建好的字形块上。
@@ -395,11 +587,13 @@ public partial class LyricsPanel
         _verticalSecondaryBlocks.Clear();
         _verticalKey = null;
         _verticalContentLength = 0;
+        _verticalDocumentLength = 0;
+        _verticalDocumentKey = null;
     }
 
-    private static RotateTransform CreateUprightRotation()
+    private static RotateTransform CreateUprightRotation(double angle)
     {
-        var transform = new RotateTransform(-90);
+        var transform = new RotateTransform(angle);
         transform.Freeze();
         return transform;
     }
@@ -411,10 +605,35 @@ public partial class LyricsPanel
     /// 可用短边。它同时决定「两列放不放得下」与列在短边方向的位置，
     /// 所以尺寸变化必须触发重建——文件类注释里那笔两列账就是按它算的。
     /// </param>
+    /// <param name="Mirrored">
+    /// 是否左侧任务栏。它决定两列的左右顺序，漏进键里就会出现
+    /// 「贴边换了、列还留在旧位置」的僵局。
+    /// </param>
     private readonly record struct VerticalBuildKey(
         string Primary,
         string Secondary,
         double PrimaryFontSize,
         double SecondaryFontSize,
-        double Cross);
+        double Cross,
+        bool Mirrored);
+
+    /// <summary>
+    /// 量「整首最长一列」的输入。任何一项变了都要重量。
+    /// </summary>
+    /// <param name="Document">
+    /// 整首歌词。按**引用**比较：装配层换歌时给的是新的列表实例，
+    /// 同一首歌里重复调用给的是同一个实例，等于免费的脏检查。
+    /// </param>
+    /// <param name="Cross">
+    /// 可用短边。它决定「两列放不放得下」，进而决定译文要不要计入长度。
+    /// </param>
+    /// <param name="IncludeTranslation">
+    /// 译文列是否真的会被画出来。为 false 时长度只按主行算。
+    /// </param>
+    private readonly record struct VerticalDocumentKey(
+        IReadOnlyList<LyricLine> Document,
+        double PrimaryFontSize,
+        double SecondaryFontSize,
+        double Cross,
+        bool IncludeTranslation);
 }

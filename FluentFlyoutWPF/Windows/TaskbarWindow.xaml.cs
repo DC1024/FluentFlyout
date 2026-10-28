@@ -735,12 +735,62 @@ on_error:
         }
     }
 
+    /// <summary>
+    /// 竖向任务栏是否贴在屏幕**左**边缘。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 判据是「任务栏离显示器哪条竖边更近」：贴着屏幕边的任务栏与那一边的
+    /// 间距恒为 0，与对侧的距离则是屏幕宽度。不拿窗口坐标直接和 0 比，
+    /// 是因为副屏可以处在负坐标区（左侧的副屏 <c>Left</c> 是负数）。
+    /// </para>
+    /// <para>
+    /// 拿不到显示器信息时返回 false，也就是保持改动前的行为（按右侧处理）。
+    /// 这条回退是刻意的：镜像只影响排版朝向，判断不出来时宁可不翻，
+    /// 也不要让一整块歌词在边界情况下每隔 1.5 秒来回翻一次。
+    /// </para>
+    /// </remarks>
+    private static bool IsTaskbarFlushLeft(IntPtr taskbarHandle, RECT taskbarRect)
+    {
+        if (taskbarHandle == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        try
+        {
+            var monitor = MonitorUtil.GetMonitor(taskbarHandle);
+            var area = monitor.monitorArea;
+
+            if (area.IsEmpty || area.Width <= 0)
+            {
+                return false;
+            }
+
+            var leftGap = taskbarRect.Left - area.Left;
+            var rightGap = area.Right - taskbarRect.Right;
+
+            return leftGap <= rightGap;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn(ex, "Failed to resolve which side the taskbar is docked to; keeping vertical lyrics unmirrored.");
+            return false;
+        }
+    }
+
     private Rect PositionWidget(IntPtr taskbarHandle, RECT taskbarRect, double dpiScale, bool isMainTaskbarSelected, bool isVertical)
     {
         if (!SettingsManager.Current.TaskbarWidgetEnabled)
             return Rect.Empty;
 
         Widget.SetVerticalMode(isVertical);
+
+        // 竖排歌词的左右镜像必须在这里定：任务栏贴左侧时主列要贴屏幕边缘，
+        // 而不是继续贴屏幕中间（真机反馈的「左侧方向不对」）。
+        // 必须在 CalculateSize / MeasureDesiredWidth 之前写入——那两个方法
+        // 会读面板长度，而长度由列数决定，列的位置由这个标志决定。
+        Widget.SetVerticalMirror(isVertical && IsTaskbarFlushLeft(taskbarHandle, taskbarRect));
 
         int taskbarHeight = taskbarRect.Bottom - taskbarRect.Top;
         int taskbarWidth = taskbarRect.Right - taskbarRect.Left;
