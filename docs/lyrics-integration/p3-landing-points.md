@@ -999,7 +999,7 @@ Core 的 `WidgetPlacement` 之后，输入只剩「任务栏宽高 / 是否竖�
 | `U-assembly-single-column.png` | 整机 · 短边 28 · 深色 | 只一列：28 DIP 放不下两列，丢译文列保主列 |
 | `V-side-by-side.png` | 整机 · 左贴边 vs 右贴边对照 | 主列随贴边换到外侧；拉丁词翻 180°；两侧长度同值 |
 | `V-latin-closeup.png` | 上图的 4× 特写 | 字母形状正确（不是镜面反写），字顶朝外侧 |
-| `Z-orientation-bottom-light-100.png` | 位置矩阵 · 底部 | 1920×48 的任务栏里，组件从 24px 起、次轴上 4px 处、宽 386px（见 7.2.13） |
+| `Z-orientation-bottom-light-100.png` | 位置矩阵 · 底部 | 1920×48 的任务栏里，组件从 24px 起、次轴上 4px 处、宽 399px（见 7.2.13） |
 | `Z-orientation-left-light-100.png` | 位置矩阵 · **左贴边** | 48×1920 的竖条里主列贴左半（2663 vs 1026），文字正立 |
 | `Z-orientation-right-light-100.png` | 位置矩阵 · **右贴边** | 同一帧镜像：主列到右半（1060 vs 2621），长度不变 |
 | `Z-orientation-left-dark-200.png` | 位置矩阵 · 左贴边 · 200% 深色 | 次轴 8px 居中；1920 DIP 换成 3840px 后判据仍成立 |
