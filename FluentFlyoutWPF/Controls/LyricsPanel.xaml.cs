@@ -78,6 +78,32 @@ public partial class LyricsPanel : UserControl
     private string _cachedMeasuredText = string.Empty;
     private double _cachedMeasuredFontSize = -1;
 
+    /// <summary>
+    /// 折行高度的量尺：一个不进可视树的 <see cref="TextBlock"/>。
+    ///
+    /// <para>
+    /// <b>为什么不用 <see cref="FormattedText"/></b>：两者的断行策略不同。
+    /// <c>FormattedText</c> 只在**词边界**折行，单个词比 <c>MaxTextWidth</c>
+    /// 还宽时它宁可让词溢出也不切词，仍算一行；<see cref="TextBlock"/> 的
+    /// <see cref="TextWrapping.Wrap"/> 会把超宽词切开（"screen" → "scree" + "n"）。
+    /// 竖排任务栏的折行宽度只有 37.5 DIP，英文词几乎全部超宽，于是
+    /// 同一段文本 <c>FormattedText</c> 量出 7 行、<c>TextBlock</c> 实际排 9 行
+    /// ——容器矮两行，尾巴被 <c>ClipToBounds</c> 剪掉，屏幕上表现为
+    /// 「句子在半个词上断掉」（实测："…like a midni"，后面的 "ght sea" 全没了）。
+    /// </para>
+    /// <para>
+    /// 量尺是**同一个控件类型**，断行规则天然一致；它不参与布局，只
+    /// <see cref="UIElement.Measure"/> 一次读 <c>DesiredSize</c>，成本与原来的
+    /// <c>FormattedText</c> 同量级，且只在换行时调用（见 <see cref="ApplyFrame"/>）。
+    /// </para>
+    /// </summary>
+    private readonly TextBlock _wrapProbe = new()
+    {
+        // 刻意**不**设 Visibility.Collapsed：Collapsed 的元素 Measure 出来
+        // 恒为 (0,0)。它不挂在可视树上，Visible 也不会被渲染。
+        TextWrapping = TextWrapping.Wrap,
+    };
+
     /// <summary>累积的降级次数，供诊断与设置界面展示。</summary>
     public int DowngradeCount { get; private set; }
 
@@ -1279,10 +1305,12 @@ public partial class LyricsPanel : UserControl
             PrimaryScanText.Width = double.NaN;
             SecondaryText.Width = double.NaN;
 
-            // 面板自身的宽度也要清掉：竖向时宿主的 CalculateSize 会把它写成
-            // 「任务栏短边」（40/28 DIP），横向必须回到 Auto 交给宿主重写，
-            // 否则会在一帧里按 40 宽折行，长句被切。
+            // 面板自身的尺寸也要清掉：竖向时宿主的 CalculateSize 会把宽度写成
+            // 「可用短边」、高度写成「折行后的主轴长度」。横向两者都必须回到
+            // Auto 交给宿主重写，否则会在一帧里按 40 宽折行、或按竖向的高度
+            // 留一条空白。
             Width = double.NaN;
+            Height = double.NaN;
             _lastWrapViewport = -1;
 
             if (_hasMetrics)
@@ -1412,17 +1440,19 @@ public partial class LyricsPanel : UserControl
     /// <summary>
     /// 量出文本在给定宽度下折行后的高度（DIP）。
     ///
-    /// 用 <see cref="FormattedText"/> 而不是 <c>TextBlock.ActualHeight</c>：
-    /// 后者要等一轮布局才有值，而我们需要在**决定 Canvas 高度**的那一刻
-    /// 就知道它——否则第一次布局永远是 0 高，永远看不到文字。
+    /// 用**离树量尺**（<see cref="_wrapProbe"/>）而不是
+    /// <c>PrimaryText.ActualHeight</c>：后者要等一轮布局才有值，而我们需要在
+    /// **决定 Canvas 高度**的那一刻就知道它——否则第一次布局永远是 0 高，
+    /// 永远看不到文字。
     ///
-    /// 与 <see cref="MeasureText"/> 同源（同一个文本引擎、同样固定
-    /// <c>pixelsPerDip: 1</c>），所以折行点与 TextBlock 一致。
+    /// 也不用 <see cref="FormattedText"/>：两者对「比折行宽度还宽的单个词」
+    /// 处理不同，它不切词、<see cref="TextBlock"/> 切词，量出来会少行
+    /// （详见 <see cref="_wrapProbe"/> 的说明）。量尺与真正显示文本的控件
+    /// 同类同属性，断行点才真正一致。
     /// </summary>
     /// <param name="maxWidth">
     /// 折行宽度。传 <see cref="double.PositiveInfinity"/> 表示**不折行**，
-    /// 只量单行高度——<c>FormattedText.MaxTextWidth</c> 不接受无穷，
-    /// 所以这里显式跳过赋值（默认就是不限制）。
+    /// 只量单行高度（<see cref="MeasureLineHeight"/> 就是这么用的）。
     /// </param>
     private double MeasureWrappedHeight(string? text, double fontSize, double maxWidth)
     {
@@ -1433,32 +1463,36 @@ public partial class LyricsPanel : UserControl
 
         try
         {
-            var typeface = new Typeface(
-                PrimaryText.FontFamily,
-                PrimaryText.FontStyle,
-                PrimaryText.FontWeight,
-                PrimaryText.FontStretch);
+            var probe = _wrapProbe;
+            probe.FontFamily = PrimaryText.FontFamily;
+            probe.FontStyle = PrimaryText.FontStyle;
+            probe.FontWeight = PrimaryText.FontWeight;
+            probe.FontStretch = PrimaryText.FontStretch;
+            probe.FontSize = fontSize;
+            probe.Text = text;
 
-            var formatted = new FormattedText(
-                text,
-                System.Globalization.CultureInfo.CurrentCulture,
-                FlowDirection,
-                typeface,
-                fontSize,
-                Brushes.Black,
-                null,
-                pixelsPerDip: 1)
-            {
-                TextAlignment = TextAlignment.Left,
-            };
+            // 文本管线也要与真正显示的那个控件一致：Display/Ideal 的字形步进
+            // 不同，混用会让折行点差一两个字，量的高度就白量了。
+            probe.FlowDirection = FlowDirection;
+            TextOptions.SetTextFormattingMode(probe, TextOptions.GetTextFormattingMode(PrimaryText));
+            TextOptions.SetTextRenderingMode(probe, TextOptions.GetTextRenderingMode(PrimaryText));
 
-            // MaxTextWidth 默认就是「不限制」；只有拿到有限宽度才需要折行。
+            double available;
             if (double.IsFinite(maxWidth))
             {
-                formatted.MaxTextWidth = maxWidth;
+                // Width 与可用宽度都给同一个值：TextBlock 的断行只看 Width，
+                // 但外层给的可用宽度若更窄，它仍会按更窄的那个折。
+                probe.Width = maxWidth;
+                available = maxWidth;
+            }
+            else
+            {
+                probe.Width = double.NaN;
+                available = double.PositiveInfinity;
             }
 
-            return formatted.Height;
+            probe.Measure(new Size(available, double.PositiveInfinity));
+            return probe.DesiredSize.Height;
         }
         catch (Exception)
         {
@@ -1477,9 +1511,13 @@ public partial class LyricsPanel : UserControl
     /// 外层容器高度不够、最后一行被 <c>ClipToBounds</c> 整行裁掉，
     /// 而截图上看起来只是「字少了点」，很难发现。
     ///
-    /// 宿主取 <c>max(估算, 本属性)</c> 即可兜住偏小的一侧。
+    /// 宿主取 <c>max(估算, 本属性)</c> 即可兜住偏小的一侧，
+    /// 并按它给面板写固定高度（竖向时面板自身的高度就是主轴长度）。
     ///
-    /// 返回值是 0 表示「还没布局完」或「不在竖向」，调用方应忽略它。
+    /// 返回值是 0 表示「不在竖向」「还没度量」或「折行宽度还没由宿主写入」——
+    /// 都不是错误，调用方应退回自己的兜底值。
+    /// **它不需要先跑一轮布局**：折行高度是 <c>FormattedText</c> 现算的，
+    /// 只有折行宽度（<c>Panel.Width</c>，由宿主写）是前提。
     /// </summary>
     public double VerticalContentHeight
     {
@@ -1490,11 +1528,27 @@ public partial class LyricsPanel : UserControl
                 return 0;
             }
 
-            // 先把两行的高度按实测折行结果写对，RootGrid 才会撑到真实高度。
+            // 先把两行的高度按实测折行结果写对——这一步是同步的
+            //（FormattedText 直接量高度，不依赖布局遍）。
             UpdateVerticalWrapLayout();
 
-            var height = RootGrid.ActualHeight;
-            return double.IsFinite(height) && height > 0 ? height : 0;
+            // 取两行刚写回去的高度之和，**刻意不读 RootGrid.ActualHeight**。
+            //
+            // 两个原因，都是真机上量到过的：
+            //   1. ActualHeight 要等一整轮布局才会更新，而宿主在
+            //      <c>CalculateSize</c> 里就要用这个值决定「小组件沿主轴占多长」。
+            //      读到上一轮的旧值，小组件就永远比内容短一行，最后一行被裁。
+            //   2. 一旦宿主按这个值给面板写了固定高度（见
+            //      <c>TaskbarWidgetControl.ApplyVerticalLyricsPanelMainAxis</c>），
+            //      RootGrid 的 ActualHeight 就变成「宿主要多高」而不是
+            //      「内容要多高」——读它等于自证，内容被裁之后再也不会长回来。
+            var primary = PrimaryContainer.Height;
+            var secondary = SecondaryContainer.Height;
+
+            var total = (double.IsFinite(primary) ? Math.Max(primary, 0) : 0)
+                        + (double.IsFinite(secondary) ? Math.Max(secondary, 0) : 0);
+
+            return total;
         }
     }
     ///
