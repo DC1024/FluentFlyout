@@ -205,6 +205,12 @@ Canvas.MeasureOverride 恒返回 (0,0)
 运行期判据：日志里出现 `Vertical lyrics: wrap viewport is 0` 就说明这条链断了。
 正常情况下它最多出现一次（首次布局前），随后被宿主写入宽度后的 `SizeChanged` 覆盖。
 
+这条链现在还有一层自动化护栏：`TaskbarVerticalLyricsWiringTests` 在 STA 线程上构造
+**真实的** `TaskbarWidgetControl`，按生产顺序（`SetLyricsMode` → `SetVerticalMode` →
+`CalculateSize`）走一遍，断言 `LyricsPanel.Width` 落在 40 / 28 DIP（小任务栏 28）。
+它盯的是「宽度有没有被写进去」，不是「排版好不好看」——后者仍归截图矩阵。
+把 `ApplyVerticalLyricsPanelWidth` 那行注释掉，4 个用例里 3 个立刻红，说明这条护栏是有效的。
+
 ---
 
 ## 6. 生命周期：泵跟服务走，不跟窗口走
