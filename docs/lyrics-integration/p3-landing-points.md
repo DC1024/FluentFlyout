@@ -906,8 +906,11 @@ ClearType 量化）。位移那条断言是数字级的，留白那条是像素�
 
 **已知取舍**：
 
-- 滚动跟着用户设置里的「长句滚动」（默认关、且是会员项）。关着的时候行为与
-  改动前一致：超出的部分被裁。竖排能滚不等于竖排默认在滚。
+- 滚动跟着用户设置里的「启用滚动」（`TaskbarWidgetScrollingEnabled`，默认关，
+  见 `UserSettings.cs:971`）。关着的时候行为与改动前一致：超出的部分被裁。
+  竖排能滚不等于竖排默认在滚。
+  （原文这里写的是「且是会员项」，代码里查不到独立门控——会员门控只有任务栏
+  小组件本身 `UserSettings.cs:1109`，歌词靠依赖它才连带失效。已更正。）
 - 没有时长数据时 `LineProgress` 恒为 0，整句就在原地不动。与横向同一条边界。
 - 不逐帧缓动。位移直接由进度算出，进度怎么来就怎么走——缓动会让「唱到哪个字」
   与「屏幕停在哪」错开。
@@ -1166,7 +1169,7 @@ Windows 11 26300.9711 / 26H2，**左侧竖向任务栏**（用户自己的侧栏
 - **手工矩阵**：四方向任务栏 × 三种 DPI × 深浅主题——**自动化那半已完成**：
   四方向定位几何抽成 `WidgetPlacement`（17 条单测）+ `--orientations` 的 24 张
   位置图（120 条断言），见 7.2.13。剩下的**真机系统缩放 6 格**待执行，清单见 8.4。
-- **README** 里的歌词说明（截图 + 设置项）。
+- **README** 的歌词说明（截图 + 设置项）——**已完成**，见 8.3.2。
 
 #### 8.3.1 顺带发现：`ApplyFrame` 在纯音乐态不幂等（未修）
 
@@ -1185,6 +1188,46 @@ Windows 11 26300.9711 / 26H2，**左侧竖向任务栏**（用户自己的侧栏
 修法本身很小（在 `ApplyFrame` 里让纯音乐态的 `primary` 恒为空），但它改的是
 既有行为、影响面覆盖整个横向路径，应该单独一批做并单独验一遍截图矩阵。
 当前探针的规避方式是只对需要滚动的状态补喂那一帧（见 `Program.cs` 的注释）。
+
+#### 8.3.2 README 的图从哪来（为什么不是真机截图）
+
+README 的图有两条路：`github.com/user-attachments/...`（上游上传的附件，我们没有
+权限）或仓库内的相对路径。真机截图需要「真实媒体会话 + 有同步歌词的一首歌 +
+截任务栏」，这几件在本机自动化里凑不齐，所以走相对路径，图由**探针渲染**产出。
+
+四张图从 `FluentFlyout.Lyrics.Probe.Screenshot/bin/Release/.../shots/` 复制进
+`docs/images/`：
+
+| 文件 | 来源 | 尺寸 |
+|---|---|---|
+| `lyrics-horizontal-light.png` | `light-horizontal-200%-translation.png` | 600×80 |
+| `lyrics-horizontal-dark.png` | `dark-horizontal-200%-translation.png` | 600×80 |
+| `lyrics-vertical-light.png` | `light-vertical-200%-translation.png` | 120×312 |
+| `lyrics-vertical-dark.png` | `dark-vertical-200%-translation.png` | 120×312 |
+
+`README.md` 与 `README.zh.md` 各用一组 `<picture>` + `prefers-color-scheme` 出
+深浅两套（与页首标题同一写法），图按 1:1 像素显示——源图是 200% 渲染，所以
+在屏幕上看到的字号恰好等于 100% 缩放下的两倍，不模糊。
+
+**为什么不用 `Z-orientation-*` 那四张**：它们是位置矩阵的归档，横排 1920×48、
+竖排 48×1920 / 96×3840，是**整条任务栏**的尺寸，塞进 README 会是一条不可读的
+细线；而且横排那张左边有个 **tofu 方框**——封面占位缺字形，公共门面里不能出现。
+
+**为什么不用 `*-word-scan` 那一组**（包含已归档的 `R`/`W`）：实测整句都是
+`#7F7F7F`，深浅两张一模一样——夹具里没有音节时序，`LineProgress` 无从计算，
+所谓「逐字扫描」在静态图里根本不成立。选了 `translation` 场景：当前句
+`#323232` / `#FFFFFF`，翻译行 `#7F7F7F` / `#A6A6A6`，两套对比度都够。
+
+**顺手改掉一处内容错误**：原文写「lines wider than the widget scroll rather than
+being truncated」，但滚动跟着的是小组件页的「启用滚动」，**默认关**
+（`UserSettings.cs:971`），关着就是裁掉。README 现在把这个前提写进去了。
+
+**设置项表**的 8 行文案与 `Dictionary-en-US.xaml` / `Dictionary-zh-CN.xaml` 里的
+实际卡片名逐字对齐（`Show lyrics on the taskbar` / `在任务栏显示歌词` 等），
+不是另起一套说法。
+
+范围限定：只改了 `README.md` 与 `README.zh.md`。`README.kr/nl/ru/tr.md` 本来就没有
+歌词这一节，未动。图里的歌词是探针夹具文本，不是真实歌曲歌词。
 
 ### 8.4 真机矩阵清单（待执行）
 
