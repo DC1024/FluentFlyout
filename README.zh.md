@@ -55,6 +55,53 @@ https://github.com/user-attachments/assets/bfc7666f-1d59-4cbf-8d15-3855671cb147
 
 </details>
 
+## 歌词 🎤
+歌词画在任务栏小组件里，播放时替换歌名和歌手。在设置页的 **歌词** 里打开「在任务栏显示歌词」即可；前提是先打开任务栏小组件。
+
+<p align="center">
+	<picture>
+		<source width="600" alt="横排任务栏上的当前歌词行与它下面的翻译" media="(prefers-color-scheme: dark)" srcset="docs/images/lyrics-horizontal-dark.png" />
+		<source width="600" alt="横排任务栏上的当前歌词行与它下面的翻译" media="(prefers-color-scheme: light)" srcset="docs/images/lyrics-horizontal-light.png" />
+		<img width="600" alt="横排任务栏上的当前歌词行与它下面的翻译" src="docs/images/lyrics-horizontal-light.png">
+	</picture>
+</p>
+<p align="center">
+	<picture>
+		<source width="120" alt="同一段歌词在竖排任务栏上折成两列" media="(prefers-color-scheme: dark)" srcset="docs/images/lyrics-vertical-dark.png" />
+		<source width="120" alt="同一段歌词在竖排任务栏上折成两列" media="(prefers-color-scheme: light)" srcset="docs/images/lyrics-vertical-light.png" />
+		<img width="120" alt="同一段歌词在竖排任务栏上折成两列" src="docs/images/lyrics-vertical-light.png">
+	</picture>
+</p>
+<p align="center">
+	<sub>当前句与它的翻译，200% 缩放下的渲染结果——上方是横排任务栏，下方是竖排。<br>歌词与折行由真实控件绘制，任务栏底色由截图探针绘制。</sub>
+</p>
+
+- **跟随当前行** — 面板跟着当前句走。长于小组件的句子在打开「启用滚动」后滚动；该选项默认关闭，所以默认情况下超出的部分会被裁掉
+- **逐字高亮** — 音源带逐音节时间轴时按卡拉OK方式点亮当前句；关掉可省 CPU
+- **翻译行** — 第二行显示翻译，没有翻译时显示下一句；打开「强制单行」就不显示
+- **竖排任务栏** — 歌词折成多列铺满任务栏高度，而不是压成一行
+- **单曲偏移** — 按毫秒把歌词提前或延后，按歌曲单独保存
+- **自定义颜色与对齐** — 跟随系统主题，或自己填 `#RRGGBB` / `#AARRGGBB` / `#RGB`
+- **可与频谱共存** — 两个可以同时开，共用可用宽度
+
+### 歌词设置
+都在设置页的 **歌词** 里。
+
+| 设置项 | 作用 |
+|---|---|
+| 在任务栏显示歌词 | 总开关。依赖任务栏小组件，需要先打开它 |
+| 歌词字号 | 单位为像素。任务栏高度不够时自动缩小 |
+| 显示翻译行 | 有翻译时第二行显示翻译，没有时显示下一句预告 |
+| 逐字高亮 | 当前句按演唱进度逐字点亮。关掉可降低 CPU 占用 |
+| 强制单行 | 只显示当前句，不显示翻译与下一句 |
+| 歌词颜色 | 留空跟随系统主题。支持 `#RRGGBB`、`#AARRGGBB` 或 `#RGB` |
+| 文本对齐 | 短句在可用宽度内的水平位置。长句需要滚动时一律从左侧开始 |
+| 当前歌曲偏移 | 正值让歌词提前，负值延后，单位毫秒。按歌曲单独保存 |
+
+歌词来自 QQ 音乐、酷狗、网易云与 LRCLIB，按这个顺序查找。首次播放某首歌时需要联网检索，之后会缓存到本地。
+
+> **不向系统报告播放进度的播放器。** 网易云、酷狗等播放器把 Windows 媒体时间轴留在零点——进度一直是 `00:00`，从不前进。FluentFlyout 会识别这种情况，改为从本次播放的起点计时，歌词照样滚动。从中间续播或拖动进度条后，计时会差出你跳过的那段，用上面的「当前歌曲偏移」校正。
+
 ## 音乐弹窗 🎵
 <div align="center">
 	<img height="205px" width="auto" src="https://github.com/user-attachments/assets/4dab1c12-594a-4785-bddc-0da1783bf1c8"> <img height="205px" src="https://github.com/user-attachments/assets/b4306026-b274-418b-a39e-78877e7610a7"> 	<img height="190px" src="https://github.com/user-attachments/assets/39de69fe-54c8-4b22-880c-7f0370b8dd9c"> <img height="190px" src="https://github.com/user-attachments/assets/a25adb0e-963a-49a5-8abb-d9a288c2ad9a"> <img height="190px" src="https://github.com/user-attachments/assets/2de44e7b-7e6c-4575-bf3b-0be2f741c994">
