@@ -388,14 +388,39 @@ public partial class LyricsPanel : UserControl
     {
         ArgumentNullException.ThrowIfNull(frame);
 
+        // 纯音乐态：这一帧的**内容**恒为空。
+        //
+        // 不能只靠 UpdatePureMusicState 的「首次进入时清一次」——那是边沿触发的：
+        // 第二次喂同一个纯音乐帧时 IsPureMusic 已经是 true，清空分支早退，
+        // 而主行赋值排在它前面，文字于是被写回面板（见 p3-landing-points.md 8.3.1）。
+        // 生产里被 UpdateTextRegionVisibility 藏住看不见，截图探针补喂一帧就现形。
+        //
+        // 在这里归一化一次，比在每个写入点各加一条 if 可靠：扫描、次行、滚动、
+        // 竖向建树读的都是这个对象，漏改一处就漏一条路径。IsPureMusic 本身必须保留
+        // ——宿主靠它决定把面板让位给频谱（TaskbarWidgetControl.UpdateTextRegionVisibility）。
+        var effective = frame.IsPureMusic
+            ? frame with
+            {
+                CurrentLine = string.Empty,
+                NextLine = string.Empty,
+                CurrentTranslation = string.Empty,
+                NextTranslation = string.Empty,
+                WordScanProgress = null,
+                LineProgress = 0,
+            }
+            : frame;
+
         var lineChanged = !string.Equals(
             _frame?.CurrentLine,
-            frame.CurrentLine,
+            effective.CurrentLine,
             StringComparison.Ordinal);
 
-        _frame = frame;
+        // 存归一化后的那一帧：它才是屏幕上真正的内容。
+        // 改对齐 / 关翻译时重放用的是 _frame（见 ApplyAlignment 与
+        // RefreshSecondaryLineLayout），存原始帧会把纯音乐的字又写回去。
+        _frame = effective;
 
-        var primary = frame.CurrentLine ?? string.Empty;
+        var primary = effective.CurrentLine ?? string.Empty;
         var primaryChanged = !string.Equals(PrimaryText.Text, primary, StringComparison.Ordinal);
 
         if (primaryChanged)
@@ -412,16 +437,16 @@ public partial class LyricsPanel : UserControl
             ResetScanModeForNewLine();
         }
 
-        UpdatePureMusicState(frame.IsPureMusic);
-        UpdateSecondaryLine(frame);
+        UpdatePureMusicState(effective.IsPureMusic);
+        UpdateSecondaryLine(effective);
 
         // 进度与排版方向无关，横竖都要记：竖向字形树随时可能被重建，
         // 重建后要凭这一份把灯补上（见 LyricsPanel.VerticalScan.cs）。
-        TrackVerticalScan(frame);
+        TrackVerticalScan(effective);
 
         // 长句滚动同理：位移也由重建后的内容长度算出来，
         // 而重建发生在 ApplyFrame 之外（见 LyricsPanel.VerticalScroll.cs）。
-        TrackVerticalScroll(frame);
+        TrackVerticalScroll(effective);
 
         if (_isVertical)
         {
@@ -431,16 +456,16 @@ public partial class LyricsPanel : UserControl
         }
         else
         {
-            UpdateScan(frame);
+            UpdateScan(effective);
         }
 
-        UpdateScroll(frame);
+        UpdateScroll(effective);
 
         // 竖向要跟着文本重建字形树。
         //
-        // 无条件调用而不是「只在文本变了时」：纯音乐态/清空会在
-        // UpdateSecondaryLine 之后又把文本抹掉，靠布尔标记判断容易漏一次
-        // （漏的后果是歌词停在上一句，截图上看不出来）。
+        // 无条件调用而不是「只在文本变了时」：文本不只由上面那段赋值改变——
+        // Clear、RefreshSecondaryLineLayout、宿主写短边都会改输入，
+        // 靠布尔标记判断容易漏一次（漏的后果是歌词停在上一句，截图上看不出来）。
         // EnsureVerticalLayout 自己用输入做键，没变就是一次字符串比较。
         if (_isVertical)
         {

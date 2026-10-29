@@ -722,22 +722,17 @@ internal static class Program
         // 在整张矩阵里从来没有被真正渲染过——图上永远是开头几个字，
         // 而断言只量墨迹宽度，照样全绿。
         //
-        // 只对需要滚动的状态补喂，不是图省事：ApplyFrame 在纯音乐态上
-        // **不幂等**——它先把 CurrentLine 写进 PrimaryText（第 398 行），
-        // 再由 UpdatePureMusicState 在「首次进入纯音乐」时清空；第二次调用
-        // 时状态已是纯音乐、清空分支早退，文字于是被写回来。生产里这个
-        // 问题被 UpdateTextRegionVisibility 藏面板遮住了，探针没有那层，
-        // 补喂就会让 12 张 pure-music 图从「无墨迹」变成「有墨迹」。
-        // 那是另一个缺陷（见 p3-landing-points.md 的已知问题），
-        // 不该在「竖排滚动」这一批里顺手改掉。
-        if (state.Scrolls)
-        {
-            panel.ApplyFrame(state.Frame);
+        // 补喂**所有状态**，不再只补 scrolls 那几组。
+        // 之前那道 `if (state.Scrolls)` 是绕开 8.3.1 的权宜之计：ApplyFrame 在
+        // 纯音乐态不幂等，补喂会让 12 张 pure-music 图从「无墨迹」变成「有墨迹」。
+        // 那个缺陷本轮已修（ApplyFrame 入口把纯音乐帧的内容归一化成空），
+        // 于是这道闸门可以拆掉——拆掉之后，「纯音乐态无墨迹」那条反向断言
+        // 自动变成幂等性的回归护栏：一旦有人把归一化去掉，它立刻变红。
+        panel.ApplyFrame(state.Frame);
 
-            renderRoot.Measure(new Size(logicalWidth, logicalHeight));
-            renderRoot.Arrange(new Rect(0, 0, logicalWidth, logicalHeight));
-            renderRoot.UpdateLayout();
-        }
+        renderRoot.Measure(new Size(logicalWidth, logicalHeight));
+        renderRoot.Arrange(new Rect(0, 0, logicalWidth, logicalHeight));
+        renderRoot.UpdateLayout();
 
         // 位移（DIP，负值表示已往前滚）与「按公式应该滚多少」。
         //
