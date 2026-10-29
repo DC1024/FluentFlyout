@@ -67,15 +67,47 @@ https://github.com/user-attachments/assets/bfc7666f-1d59-4cbf-8d15-3855671cb147
 </details>
 
 ## Lyrics 🎤
-Lyrics are drawn inside the taskbar widget, replacing the title and artist while a track is playing. Enable them under **Lyrics** in the settings; the taskbar widget has to be on first.
+Lyrics are drawn inside the taskbar widget, replacing the title and artist while a track is playing. Switch them on with **Show lyrics on the taskbar** on the **Lyrics** page in the settings; the taskbar widget has to be on first.
 
-- **Synchronized scrolling** — the panel follows the current line, and lines wider than the widget scroll rather than being truncated
+<p align="center">
+	<picture>
+		<source width="600" alt="Current lyric line with its translation underneath, in a horizontal taskbar" media="(prefers-color-scheme: dark)" srcset="docs/images/lyrics-horizontal-dark.png" />
+		<source width="600" alt="Current lyric line with its translation underneath, in a horizontal taskbar" media="(prefers-color-scheme: light)" srcset="docs/images/lyrics-horizontal-light.png" />
+		<img width="600" alt="Current lyric line with its translation underneath, in a horizontal taskbar" src="docs/images/lyrics-horizontal-light.png">
+	</picture>
+</p>
+<p align="center">
+	<picture>
+		<source width="120" alt="The same lyrics wrapped into two columns on a vertical taskbar" media="(prefers-color-scheme: dark)" srcset="docs/images/lyrics-vertical-dark.png" />
+		<source width="120" alt="The same lyrics wrapped into two columns on a vertical taskbar" media="(prefers-color-scheme: light)" srcset="docs/images/lyrics-vertical-light.png" />
+		<img width="120" alt="The same lyrics wrapped into two columns on a vertical taskbar" src="docs/images/lyrics-vertical-light.png">
+	</picture>
+</p>
+<p align="center">
+	<sub>Current line and its translation, rendered at 200% scale — horizontal taskbar above, vertical below.<br>Lyrics and their wrapping are drawn by the real widget; the taskbar background is drawn by the screenshot probe.</sub>
+</p>
+
+- **Synchronized scrolling** — the panel follows the current line. Lines longer than the widget scroll when **Enable Scrolling** is turned on; that option is off by default, so out of the box the overhang is clipped
 - **Word-by-word highlighting** — karaoke-style fill for sources that carry per-syllable timing; turn it off to save CPU
-- **Translation line** — the second line shows the translation when the source has one, otherwise the next line
-- **Vertical taskbars** — lyrics wrap and use the full taskbar height rather than being squeezed into one line
+- **Translation line** — the second line shows the translation when the source has one, otherwise the next line; **Force single line** hides it
+- **Vertical taskbars** — lyrics wrap into columns and use the full taskbar height rather than being squeezed into one line
 - **Per-track offset** — nudge lyrics earlier or later in milliseconds; saved per track
 - **Custom colour and alignment** — follow the system theme, or set your own `#RRGGBB` / `#AARRGGBB` / `#RGB`
 - **Runs alongside the visualizer** — both can be enabled at once and share the available width
+
+### Lyrics settings
+All of them are on the **Lyrics** page in the settings.
+
+| Setting | What it does |
+|---|---|
+| Show lyrics on the taskbar | The switch itself. Needs the taskbar widget, which has to be on first |
+| Lyrics font size | In pixels. Shrinks automatically when the taskbar is too short |
+| Show translation line | Second line shows the translation when available, otherwise the next line |
+| Word-by-word highlight | Light up the current line as it is sung. Off saves CPU |
+| Force single line | Current line only — no translation, no next line |
+| Lyrics color | Empty follows the system theme. Accepts `#RRGGBB`, `#AARRGGBB` or `#RGB` |
+| Text alignment | Horizontal position of short lines. Lines that need scrolling always start from the left |
+| Offset for current track | Positive makes lyrics earlier, negative later, in milliseconds. Saved per track |
 
 Lyrics are looked up from QQ Music, Kugou, NetEase Cloud Music and LRCLIB, in that order. The first play of a track needs a network lookup; results are cached locally afterwards.
 
