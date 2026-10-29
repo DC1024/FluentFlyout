@@ -3,10 +3,8 @@
 
 using FluentFlyout.Classes.Settings;
 using FluentFlyoutWPF.Classes.Utils;
-using Microsoft.Win32;
 using NLog;
 using System.Diagnostics;
-using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using MessageBox = Wpf.Ui.Controls.MessageBox;
@@ -32,29 +30,13 @@ public partial class SystemPage : Page
     {
         try
         {
-            using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", true);
-            if (key == null) return;
-            const string appName = "FluentFlyout";
-            var executablePath = Environment.ProcessPath;
+            string? error;
+            bool succeeded = enable
+                ? StartupRegistration.TryEnable(out error)
+                : StartupRegistration.TryDisable(out error);
 
-            if (enable)
-            {
-                if (File.Exists(executablePath))
-                {
-                    key.SetValue(appName, executablePath);
-                }
-                else
-                {
-                    throw new FileNotFoundException("Application executable not found");
-                }
-            }
-            else
-            {
-                if (key.GetValue(appName) != null)
-                {
-                    key.DeleteValue(appName, false);
-                }
-            }
+            if (!succeeded)
+                throw new InvalidOperationException(error ?? "Failed to set startup");
         }
         catch (Exception ex)
         {

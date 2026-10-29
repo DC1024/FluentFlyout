@@ -15,7 +15,6 @@ using FluentFlyoutWPF.ViewModels;
 using FluentFlyoutWPF.Windows;
 using MicaWPF.Controls;
 using MicaWPF.Core.Extensions;
-using Microsoft.Win32;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -130,22 +129,38 @@ public partial class MainWindow : MicaWindow
 
         if (!singleton.WaitOne(TimeSpan.Zero, true)) // if another instance is already running, close this one
         {
-            // Signal the existing instance to open settings
-            Task.Run(() =>
+            // 只有「用户主动又启动了一次」才值得把设置窗口叫出来。
+            //
+            // 开机自启拉起的第二份拷贝（--minimized）必须静默退出：MSIX 的
+            // windows.startupTask 与 HKCU\...\Run 可能同时存在，两份都在登录时启动，
+            // 后到的那份若照旧发信号，已有实例就会弹设置窗口——用户看到的就是
+            // 「开机总是弹出来」。用户双击图标那种情况仍然保留原来的弹窗行为。
+            if (StartupOptions.IsMinimized)
             {
-                try
+                Logger.Info("Another instance is already running; autostart copy exits silently");
+            }
+            else
+            {
+                // Signal the existing instance to open settings
+                Task.Run(() =>
                 {
-                    using (EventWaitHandle settingsEvent = new EventWaitHandle(false, EventResetMode.AutoReset, "FluentFlyout_OpenSettings"))
+                    try
                     {
-                        settingsEvent.Set();
+                        using (EventWaitHandle settingsEvent = new EventWaitHandle(false, EventResetMode.AutoReset, "FluentFlyout_OpenSettings"))
+                        {
+                            settingsEvent.Set();
+                        }
                     }
-                }
-                catch (Exception ex)
-                {
-                    Logger.Error(ex, "Failed to signal existing instance");
-                }
-            });
+                    catch (Exception ex)
+                    {
+                        Logger.Error(ex, "Failed to signal existing instance");
+                    }
+                });
+            }
 
+            // NLog 的 file target 是 async 的，Environment.Exit 不保证把队列刷盘，
+            // 而上面那行日志恰恰是排查「登录时到底起了几份」时唯一的证据。
+            NLog.LogManager.Flush();
             Environment.Exit(0);
         }
 
@@ -184,12 +199,13 @@ public partial class MainWindow : MicaWindow
         // RestoreSettings may replace SettingsManager.Current instance, so rebind DataContext.
         DataContext = SettingsManager.Current;
 
-        if (SettingsManager.Current.Startup == true) // add to startup programs if enabled, needs improvement
+        // 每次启动都重写一遍自启项。两个现实原因：用户可能把便携版目录搬了家；
+        // 旧版本（含 2.16.0.0）写进去的是不带 --minimized 的裸路径——
+        // 只要新版跑起来一次，这条旧值就自动升级成带标记的形态。
+        if (SettingsManager.Current.Startup == true)
         {
-            RegistryKey? key = Registry.CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", true);
-            string? executablePath = Environment.ProcessPath;
-            if (key != null && executablePath != null)
-                key.SetValue("FluentFlyout", executablePath);
+            if (!StartupRegistration.TryEnable(out string? startupError) && startupError != null)
+                Logger.Warn($"Failed to register startup entry: {startupError}");
         }
 
         // display tray icon if enabled
@@ -227,7 +243,11 @@ public partial class MainWindow : MicaWindow
         }
 
         string previousVersion = SettingsManager.Current.LastKnownVersion;
-        _ = CheckForExperimentsOnStartupAsync(previousVersion);
+
+        // 引导流程会直接打开设置窗口/引导窗口，开机自启时一律跳过：
+        // 用户此刻要的是「安静待在后台」，不是一登录就被塞一屏设置。
+        if (!StartupOptions.IsMinimized)
+            _ = CheckForExperimentsOnStartupAsync(previousVersion);
 
         // apply other things on new thread
         Dispatcher.Invoke(() =>
