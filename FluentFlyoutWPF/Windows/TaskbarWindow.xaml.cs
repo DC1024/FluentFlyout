@@ -907,10 +907,13 @@ on_error:
                 return false;
             }
 
-            var leftGap = taskbarRect.Left - area.Left;
-            var rightGap = area.Right - taskbarRect.Right;
-
-            return leftGap <= rightGap;
+            // 判据本身在 Core 里（WidgetPlacement.IsFlushLeft）：多显示器时左侧屏幕的
+            // x 是负的，按符号判会全反，只能比「离哪边更近」。这里只负责拿显示器信息。
+            return WidgetPlacement.IsFlushLeft(
+                taskbarRect.Left,
+                taskbarRect.Right,
+                area.Left,
+                area.Right);
         }
         catch (Exception ex)
         {
@@ -951,14 +954,13 @@ on_error:
 
         // On a vertical taskbar the widget is rotated 90°, so the axes flip:
         //   primarySize = taskbarHeight, positioning runs along Y
-        //   crossSize   = taskbarWidth,  widget is centered along X
         //   physicalWidth  = visual extent along primary axis (logical width = visual height after rotation)
         //   physicalHeight = visual extent along cross axis   (logical height = visual width after rotation)
+        //
+        // 次轴居中与轴对调留在下面交给 WidgetPlacement.Resolve——那段是纯算术，
+        // 四种方向 × 三档 DPI 由 Core 单测精确断言。本机摆不出竖向任务栏
+        // （见文档 7.2.6），不抽出来就没有任何一条断言能碰到「左/右」这两列。
         int primarySize = isVertical ? taskbarHeight : taskbarWidth;
-        int crossSize = isVertical ? taskbarWidth : taskbarHeight;
-
-        // Center on the cross axis; both orientations use physicalHeight for the cross dimension
-        int crossPos = (crossSize - physicalHeight) / 2;
 
         // Primary axis position (calculated per-case below)
         int primaryPos = 0;
@@ -1114,17 +1116,23 @@ on_error:
 
         primaryPos += SettingsManager.Current.TaskbarWidgetManualPadding;
 
-        // Set widget position within canvas
-        // primaryPos → left (horizontal) or top (vertical); crossPos → top (horizontal) or left (vertical)
-        Canvas.SetLeft(Widget, (isVertical ? crossPos : primaryPos) / dpiScale);
-        Canvas.SetTop(Widget, (isVertical ? primaryPos : crossPos) / dpiScale);
+        // 画布坐标（DIP）：竖向时主轴走 Top、次轴居中走 Left，横向相反。
+        // 屏幕占位矩形在竖向要换宽高——旋转只发生在渲染层，屏幕不知道这回事。
+        var placement = WidgetPlacement.Resolve(
+            taskbarWidth,
+            taskbarHeight,
+            isVertical,
+            physicalWidth,
+            physicalHeight,
+            primaryPos,
+            dpiScale);
+
+        Canvas.SetLeft(Widget, placement.CanvasLeft);
+        Canvas.SetTop(Widget, placement.CanvasTop);
         Widget.Width = physicalWidth / dpiScale;
         Widget.Height = physicalHeight / dpiScale;
 
-        // After 90° LayoutTransform the visual bounding rect has swapped dimensions
-        double rectW = isVertical ? physicalHeight : physicalWidth;
-        double rectH = isVertical ? physicalWidth : physicalHeight;
-        return new Rect(Canvas.GetLeft(Widget) * dpiScale, Canvas.GetTop(Widget) * dpiScale, rectW, rectH);
+        return new Rect(placement.RectX, placement.RectY, placement.RectWidth, placement.RectHeight);
     }
 
     /// <summary>

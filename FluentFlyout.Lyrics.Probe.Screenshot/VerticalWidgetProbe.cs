@@ -50,6 +50,12 @@ internal static class VerticalWidgetProbe
 
     private static int _failures;
 
+    /// <summary>
+    /// 累计失败数。四方向位置矩阵那支共用同一个计数器——退出码只留一个来源，
+    /// 免得「矩阵报了红但进程退 0」。
+    /// </summary>
+    internal static int Failures => _failures;
+
     /// <summary>跑一遍整机装配链，返回失败数（0 = 全过）。</summary>
     public static int Run()
     {
@@ -493,7 +499,7 @@ internal static class VerticalWidgetProbe
             logicalHeight);
     }
 
-    private static void Arrange(Canvas canvas, double width, double height)
+    internal static void Arrange(Canvas canvas, double width, double height)
     {
         for (var pass = 0; pass < 2; pass++)
         {
@@ -512,7 +518,7 @@ internal static class VerticalWidgetProbe
     /// 与主矩阵一致，先反预乘再比亮度：<c>RenderTargetBitmap</c> 的目标格式是
     /// <c>Pbgra32</c>，半透明边界像素的 RGB 已被 alpha 压过，直接比会误判。
     /// </remarks>
-    private static InkStats MeasureInk(
+    internal static InkStats MeasureInk(
         BitmapSource bitmap, SolidColorBrush background, Rect panelRect, double dpiScale)
     {
         var width = bitmap.PixelWidth;
@@ -593,9 +599,9 @@ internal static class VerticalWidgetProbe
     /// 左右分布是「哪一列是主列」在像素上的唯一证据：主列字数多、墨迹厚，
     /// 只要主列在哪边是确定的，两半的墨迹量就会明显偏斜。
     /// </remarks>
-    private readonly record struct InkStats(int Pixels, int LeftPixels, int RightPixels, Rect Bounds);
+    internal readonly record struct InkStats(int Pixels, int LeftPixels, int RightPixels, Rect Bounds);
 
-    private static void SavePng(BitmapSource bitmap, string path)
+    internal static void SavePng(BitmapSource bitmap, string path)
     {
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
@@ -603,7 +609,7 @@ internal static class VerticalWidgetProbe
         encoder.Save(stream);
     }
 
-    private static void Check(string name, bool condition, string detail)
+    internal static void Check(string name, bool condition, string detail)
     {
         if (condition)
         {

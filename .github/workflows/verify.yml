@@ -295,6 +295,16 @@ jobs:
         working-directory: FluentFlyout.Lyrics.Probe.Screenshot
         run: dotnet run -c Release --no-build -- --assembly
 
+      # 四方向位置矩阵：底部/顶部/左/右 × 3 DPI × 深浅，24 张。
+      #
+      # 为什么单列一步：它验的是**位置**，不是排版。小组件被摆到任务栏外面时
+      # 每张图里的歌词都清清楚楚，上面两步都可能全绿——只有「是否越界 /
+      # 次轴是否居中 / 朝向对不对 / 主列贴哪半边」这几条判据抓得住。
+      # 也是 Win11 上唯一能覆盖「左/右竖排」的自动化手段（摆不出竖向任务栏）。
+      - name: 四方向位置矩阵（越界 / 居中 / 朝向 / 镜像）
+        working-directory: FluentFlyout.Lyrics.Probe.Screenshot
+        run: dotnet run -c Release --no-build -- --orientations
+
       # R1 卡顿护栏：模拟 60s 播放，数歌词路径请求了多少次整窗重排。
       #
       # 这条判据与像素无关，坏起来在截图上**完全看不出来**——小组件画得
