@@ -104,9 +104,11 @@ This fork does not ship a Microsoft Store build and has no signed MSIX. Three op
 
 ### 1. Grab a portable build (recommended)
 
-Open [the portable build workflow](https://github.com/DC1024/FluentFlyout/actions/workflows/build-portable.yml), pick a successful run, download `FluentFlyoutLyrics-portable-win-x64.zip`, extract it and run `FluentFlyoutLyrics.exe`.
+Download [`FluentFlyoutLyrics-portable-win-x64.zip`](https://github.com/DC1024/FluentFlyout/releases/latest/download/FluentFlyoutLyrics-portable-win-x64.zip) from [the latest release](https://github.com/DC1024/FluentFlyout/releases), extract it and run `FluentFlyoutLyrics.exe`.
 
 Requires the [.NET 10 desktop runtime](https://dotnet.microsoft.com/download/dotnet/10.0).
+
+Want something newer than the last release? Every push to `master` builds the same zip — grab it from [the portable build workflow](https://github.com/DC1024/FluentFlyout/actions/workflows/build-portable.yml). Those artifacts need a GitHub login and expire after 30 days, which is why releases are the recommended path.
 
 ### 2. Build it yourself
 
