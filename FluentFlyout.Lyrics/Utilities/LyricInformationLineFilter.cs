@@ -72,43 +72,50 @@ public static class LyricInformationLineFilter
     /// 或者干脆什么都没有，覆盖 <c>作词：X</c>、<c>词 Lyricist：X</c>、
     /// <c>录音室 (铜管)：X</c> 三种写法。
     /// </summary>
+    /// <remarks>
+    /// 下面这些正则一律不开 <see cref="RegexOptions.Compiled"/>。本类每首歌只跑一次，
+    /// 编译成动态程序集省下的那点匹配时间，远比不上首次调用多付的 30 ms：实测 69 行的
+    /// 文档在 <c>Compiled</c> 下稳态 0.062 ms、解释执行 0.089 ms，但首次调用是 37 ms
+    /// 对 8 ms。这个首次调用恰好落在「解析结果回来 → 组装文档」的续程上，
+    /// 会让歌词晚 30 ms 才上屏，也会把依赖短等待的单元测试拖崩。
+    /// </remarks>
     private static readonly Regex LabeledCreditRegex = new(
         @"^\s*(?:" + string.Join('|', CreditLabels) + @")\s*(?:"
         + @"(?:[（(][^）)]{0,40}[）)])\s*[^：:\r\n]{0,160}"
         + @"|[A-Za-z0-9][^：:\r\n]{0,160}"
         + @")?[：:]",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     /// <summary>整行都是英文的制作标签。</summary>
     private static readonly Regex EnglishCreditRegex = new(
         @"^\s*(?:Lyricist|Composer|Arranger|Producer|Recording|Mixing|Mastering|Engineer|"
         + @"Studio|Conductor|Vocal|Chorus|Drums|Bass|Guitar|Keyboard|Handclaps|Copyright)"
         + @"\b[^：:\r\n]{0,120}[：:]",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     /// <summary>整行被括号包住的版权声明，例如 <c>（未经著作人许可，不得翻唱、翻录或使用）</c>。</summary>
     private static readonly Regex ParenthesizedLineRegex = new(
         @"^[（(][^（）()]{1,200}[）)]$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        RegexOptions.CultureInvariant);
 
     private static readonly Regex NoticeKeywordRegex = new(
         @"未经|著作权|版权|许可",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        RegexOptions.CultureInvariant);
 
     /// <summary>歌名与歌手之间的分隔符。<c>-</c> 前后带空格，或横线后带空格。</summary>
     private static readonly Regex DashSeparatorRegex = new(
         @"\s[-–—－]\s?|[-–—－]\s",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        RegexOptions.CultureInvariant);
 
     /// <summary>句读。带句读的行一律不当元信息，避免把正常歌词吃进来。</summary>
     private static readonly Regex SentencePunctuationRegex = new(
         @"[。！？!?]",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        RegexOptions.CultureInvariant);
 
     /// <summary>「左半段：右半段」的通用形状，只在元信息块内部才会被采信。</summary>
     private static readonly Regex GenericColonRegex = new(
         @"^\s*([^：:\r\n]{1,60})\s*[：:]\s*(\S.*)$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        RegexOptions.CultureInvariant);
 
     /// <summary>
     /// 算出哪些行不是歌词。<c>true</c> 表示该行应当被剔除。
