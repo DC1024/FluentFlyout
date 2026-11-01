@@ -1,106 +1,141 @@
+<h1 align="center">FluentFlyout Lyrics</h1>
+
 <p align="center">
-	<picture>
-		<source width="65%" alt="fluentflyout-title" media="(prefers-color-scheme: dark)" srcset="https://github.com/user-attachments/assets/daa2969f-8ad2-4832-8253-26133a50c921" />
-		<source width="65%" alt="fluentflyout-title" media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/3e75e514-b9a6-40e3-b170-af9d29a82bb4" />
-		<img width="65%" alt="fluentflyout-title" src="https://github.com/user-attachments/assets/daa2969f-8ad2-4832-8253-26133a50c921">
-	</picture>
+  <strong>Synchronized lyrics in the Windows taskbar — on top of everything FluentFlyout already does.</strong>
 </p>
 
 <p align="center">
-	<img alt="GitHub Release" src="https://img.shields.io/github/v/release/unchihugo/FluentFlyout">
-	<img alt="Static Badge" src="https://img.shields.io/badge/downloads-500k%2B-blue?color=limegreen">
-	<a href="https://hosted.weblate.org/engage/fluentflyout/"><img src="https://hosted.weblate.org/widget/fluentflyout/svg-badge.svg" alt="Translation status"/></a>
-	<img alt="GitHub contributors" src="https://img.shields.io/github/contributors-anon/unchihugo/fluentflyout?labelColor=midnightblue&color=goldenrod">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-GPL--3.0-blue"></a>
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-lightgrey">
+  <img alt="Upstream" src="https://img.shields.io/badge/upstream-FluentFlyout%202.16-informational">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-881%20cases-success">
 </p>
+
 <p align="center">
-  <strong>English</strong> | <a href="https://github.com/unchihugo/FluentFlyout/blob/master/README.zh.md">简体中文</a> | <a href="https://github.com/unchihugo/FluentFlyout/blob/master/README.nl.md">Nederlands</a> | <a href="https://github.com/unchihugo/FluentFlyout/blob/master/README.tr.md">Türkçe</a> | <a href="https://github.com/unchihugo/FluentFlyout/blob/master/README.ru.md">Русский</a> | <a href="https://github.com/unchihugo/FluentFlyout/blob/master/README.kr.md">한국어</a>
+  <strong>English</strong> | <a href="README.zh.md">简体中文</a>
 </p>
 
 ---
-FluentFlyout is the modern Flyout app for Windows, built with Fluent 2 Design principles.  
-The UI seemingly blends in with Windows 11, providing you an uninterrupted, clean, and native-like experience when controlling your media, lock keys, and more.  
 
-FluentFlyout features smooth animations, blends with your system's color themes and includes a suite of personalization settings while providing media controls, information and more in nice and modern looking popup flyouts.
+FluentFlyout Lyrics is a fork of [FluentFlyout](https://github.com/unchihugo/FluentFlyout) — the Fluent 2 media flyout for Windows with an audio flyout, a lock-key flyout and a taskbar widget.
 
-<a href="https://apps.microsoft.com/detail/9n45nsm4tnbp?referrer=appbadge&cid=GitHub_README&mode=direct">
-	<img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200"/>
-</a>
+This fork keeps **every feature of the original** and adds a lyrics engine that draws synchronized lyrics inside the taskbar widget: word-by-word highlighting, a translation line, and first-class support for vertical taskbars. It also fixes a set of everyday problems and puts the lyrics pipeline under automated test.
 
-<img alt="FluentFlyoutHero-Cinemascope" src="https://github.com/user-attachments/assets/a7c7e2db-e21b-4435-9acc-0b2c5f38eb7d" />
+It is an enhancement, not a rewrite — upstream changes are merged monthly.
 
-## Features ✨
-- **Audio flyout: Displays Cover, Title, Artist and media controls**
-- **"Up Next" flyout: shows what's next when a song ends**
-- **Lock Keys flyout: displays the status of lock keys at a glance**
-- **Taskbar widget: shows media info directly on the Windows taskbar**
-- **Taskbar lyrics: synchronized lyrics with word-by-word highlighting and a translation line**
-- Native Windows-like design
-- Uses Fluent 2 components
-- Utilises Windows Mica blur
-- Supports Light and Dark mode
-- Matches your device color theme
-- Smooth animations
-- Customizable flyout positions
-- Includes Repeat All, Repeat One and Shuffle
-- Sits unobtrusively in system tray
+## What's different 🆚
+
+| | FluentFlyout (upstream) | FluentFlyout Lyrics |
+|---|---|---|
+| Audio / lock-key / up-next flyouts | ✅ | ✅ |
+| Taskbar widget | ✅ | ✅ |
+| **Taskbar lyrics** | ❌ | ✅ word-by-word · translation line · vertical taskbars · per-track offset |
+| Lyrics sources | — | QQ Music · Kugou · NetEase Cloud Music · LRCLIB |
+| Autostart behaviour | opens the settings window | starts silently in the tray |
+| Lyrics pipeline tests | — | 881 automated cases |
+
+### 1. Taskbar lyrics 🎤
+
+The largest addition. Lyrics replace the title and artist inside the taskbar widget while a track is playing.
 
 <p align="center">
-    <a href="https://www.windowscentral.com/microsoft/windows-11/microsoft-is-too-busy-with-ai-to-fix-windows-11s-design-so-developers-stepped-up"><img height="40px" alt="Windows Central" src="https://cdn.mos.cms.futurecdn.net/pJbSHFPBawZknTYBZnj9tS-970-80.jpg.webp"></a>
-    &nbsp;&nbsp;&nbsp;
-    <a href="https://www.neowin.net/news/this-free-unofficial-app-promises-big-list-of-modern-windows-11-fluent-customization-options/"><img height="40px" alt="Neowin" src="https://upload.wikimedia.org/wikipedia/en/1/11/Neowin_Logo_1.png"></a>
+  <picture>
+    <source width="600" media="(prefers-color-scheme: dark)" srcset="docs/images/lyrics-horizontal-dark.png" />
+    <source width="600" media="(prefers-color-scheme: light)" srcset="docs/images/lyrics-horizontal-light.png" />
+    <img width="600" src="docs/images/lyrics-horizontal-light.png" alt="Current lyric line with its translation underneath">
+  </picture>
 </p>
 <p align="center">
-  <em>"Windows 11 may have just gained another must-have app."</em> — <strong><a href="https://www.windowscentral.com/microsoft/windows-11/microsoft-is-too-busy-with-ai-to-fix-windows-11s-design-so-developers-stepped-up">Windows Central</a></strong><br>
-  <em>"Does a better job than what Microsoft officially offers."</em> — <strong><a href="https://www.neowin.net/news/this-free-unofficial-app-promises-big-list-of-modern-windows-11-fluent-customization-options/">Neowin</a></strong>
-</p>
-
-## Taskbar widget ⏯️
-<div align="center">
-	<img height="440px" width="auto" src="https://github.com/user-attachments/assets/43963c54-e2d8-4b93-9842-482e12b2c592" />
-</div>
-
-<details close>
-<summary>Video showcase</summary>
-	
-https://github.com/user-attachments/assets/bfc7666f-1d59-4cbf-8d15-3855671cb147
-
-</details>
-
-## Lyrics 🎤
-Lyrics are drawn inside the taskbar widget, replacing the title and artist while a track is playing. Switch them on with **Show lyrics on the taskbar** on the **Lyrics** page in the settings; the taskbar widget has to be on first.
-
-<p align="center">
-	<picture>
-		<source width="600" alt="Current lyric line with its translation underneath, in a horizontal taskbar" media="(prefers-color-scheme: dark)" srcset="docs/images/lyrics-horizontal-dark.png" />
-		<source width="600" alt="Current lyric line with its translation underneath, in a horizontal taskbar" media="(prefers-color-scheme: light)" srcset="docs/images/lyrics-horizontal-light.png" />
-		<img width="600" alt="Current lyric line with its translation underneath, in a horizontal taskbar" src="docs/images/lyrics-horizontal-light.png">
-	</picture>
+  <picture>
+    <source width="120" media="(prefers-color-scheme: dark)" srcset="docs/images/lyrics-vertical-dark.png" />
+    <source width="120" media="(prefers-color-scheme: light)" srcset="docs/images/lyrics-vertical-light.png" />
+    <img width="120" src="docs/images/lyrics-vertical-light.png" alt="The same lyrics on a vertical taskbar, one glyph per row">
+  </picture>
 </p>
 <p align="center">
-	<picture>
-		<source width="120" alt="The same lyrics wrapped into two columns on a vertical taskbar" media="(prefers-color-scheme: dark)" srcset="docs/images/lyrics-vertical-dark.png" />
-		<source width="120" alt="The same lyrics wrapped into two columns on a vertical taskbar" media="(prefers-color-scheme: light)" srcset="docs/images/lyrics-vertical-light.png" />
-		<img width="120" alt="The same lyrics wrapped into two columns on a vertical taskbar" src="docs/images/lyrics-vertical-light.png">
-	</picture>
-</p>
-<p align="center">
-	<sub>Current line and its translation, rendered at 200% scale — horizontal taskbar above, vertical below.<br>Lyrics and their wrapping are drawn by the real widget; the taskbar background is drawn by the screenshot probe.</sub>
+  <sub>Rendered at 200% scale — horizontal taskbar above, vertical below. The widget draws the lyrics; the taskbar background is drawn by the screenshot probe.</sub>
 </p>
 
-- **Synchronized scrolling** — the panel follows the current line. Lines longer than the widget scroll when **Enable Scrolling** is turned on; that option is off by default, so out of the box the overhang is clipped
-- **Word-by-word highlighting** — karaoke-style fill for sources that carry per-syllable timing; turn it off to save CPU
-- **Translation line** — the second line shows the translation when the source has one, otherwise the next line; **Force single line** hides it
-- **Vertical taskbars** — lyrics wrap into columns and use the full taskbar height rather than being squeezed into one line
+- **Word-by-word highlighting** — karaoke-style fill for sources that carry per-syllable timing, with a three-level scan fallback when the timed source only gives line-level data
+- **Translation line** — the second line shows the translation when the source has one, otherwise the next line
+- **Vertical taskbars** — lyrics run one glyph per row down the taskbar, and a line too long for the screen scrolls along the main axis instead of being cut off
+- **Four taskbar orientations** — top, bottom, left and right are all measured and laid out separately; the left taskbar gets a mirrored layout rather than a rotated one
 - **Per-track offset** — nudge lyrics earlier or later in milliseconds; saved per track
 - **Custom colour and alignment** — follow the system theme, or set your own `#RRGGBB` / `#AARRGGBB` / `#RGB`
 - **Runs alongside the visualizer** — both can be enabled at once and share the available width
 
-### Lyrics settings
-All of them are on the **Lyrics** page in the settings.
+### 2. Silent autostart
+
+Upstream has two autostart entries registered at the same time — the MSIX `windows.startupTask` and an `HKCU\...\Run` value — and neither passes an argument that says "this launch came from autostart". The second copy fails to grab the single-instance mutex and signals the first one to open the settings window, so **every boot ends with the settings window on screen**.
+
+This fork passes a `--minimized` flag from the autostart entry, treats a second instance carrying that flag as "exit silently", and stops writing the `Run` value at all when running with packaged identity — the manifest's `startupTask` already covers that case. Double-clicking the icon still opens the settings window, as it should.
+
+### 3. Bugs fixed
+
+- **Vertical taskbars showed no lyrics at all.** The panel width was never written by the host; a `Canvas` inside a `Width="Auto"` stack panel measures to zero, so nothing was ever laid out — and nothing errored either.
+- **Long vertical lines were cut off mid-word.** The panel now measures the wrapped height with a real `TextBlock` and grows along the main axis to fit.
+- **The lyrics database never created its table**, so every track logged `no such table` before falling back.
+- **NetEase Cloud Music and Kugou never advanced the lyrics.** Those players leave the Windows media timeline at zero; the fork now falls back to a local monotonic clock, guarded by a track-length sanity check (≥ 30 s) so a bogus estimate can't make the position wrap early.
+- **Repeat-one left the local clock stuck at the end of the track.** It now resets on wrap.
+- **Opening the lyrics settings page crashed the app.** One icon name in the alignment card was not a real enum value; it only threw at runtime, when the page was constructed.
+- **The lyrics panel resized on every line.** Width is now measured once per track from the widest line, so the capsule stops breathing as lines change.
+- **Unplugging a monitor moved the widget to another screen.** The target display is now identified by device path instead of index.
+- **Instrumental frames re-applied stale content.** Frame application is now idempotent.
+
+### 4. Performance guards
+
+- The frame pump runs at 33 ms and stops entirely when lyrics are off — no idle cross-process COM calls
+- Word-by-word scanning drops to cheaper strategies when the timed data doesn't need the expensive one
+- A budget counter caps full-window relayouts, so a long line can't trigger a re-layout on every frame
+- Lyrics and the visualizer can share the taskbar instead of one silently disabling the other
+
+### 5. Engineering
+
+- **881 test cases**, spread across 531 `[Fact]` and 88 `[Theory]` methods (a theory's data rows each expand into their own case). The lyrics engine is kept free of `System.Windows`, so retrieval, parsing, timing and layout maths are all testable without a UI thread
+- A **72-screenshot visual acceptance matrix** covering four taskbar orientations × light/dark × multiple DPI scales
+- A CI gate that rejects icon names which aren't real enum values — the class of bug that crashed the settings page
+- A portable build workflow, so a testable binary is one download away
+- [Architecture notes](docs/lyrics-integration/architecture.md) documenting the layer boundaries and the non-obvious timing rules
+
+## Install 📥
+
+This fork does not ship a Microsoft Store build and has no signed MSIX. Three options:
+
+### 1. Grab a portable build (recommended)
+
+Open [the portable build workflow](https://github.com/DC1024/FluentFlyout/actions/workflows/build-portable.yml), pick a successful run, download `FluentFlyoutLyrics-portable-win-x64.zip`, extract it and run `FluentFlyoutLyrics.exe`.
+
+Requires the [.NET 10 desktop runtime](https://dotnet.microsoft.com/download/dotnet/10.0).
+
+### 2. Build it yourself
+
+```powershell
+git clone https://github.com/DC1024/FluentFlyout.git
+cd FluentFlyout
+dotnet publish FluentFlyoutWPF/FluentFlyout.csproj -c "GitHub Release" -r win-x64 --self-contained false
+```
+
+Use the `GitHub Release` configuration — it defines `GITHUB_RELEASE`, which is what makes the licence manager skip the Store entitlement check. A plain `Release` build will look for an entitlement you don't have.
+
+### 3. Coming from upstream
+
+Settings live in `%APPDATA%\FluentFlyout` and the single-instance mutex is unchanged — both deliberate, so your settings and lyric cache carry over untouched.
+
+The executable name did change though, so hand over once:
+
+1. Quit the original from its tray menu
+2. Delete the old `FluentFlyout.exe` (or the whole old folder)
+3. Run `FluentFlyoutLyrics.exe` once — it rewrites the autostart entry to point at itself
+
+Don't run both at once: they share the mutex, so the second one simply exits.
+
+## Settings
+
+All lyrics options are on the **Lyrics** page. The taskbar widget has to be on first.
 
 | Setting | What it does |
 |---|---|
-| Show lyrics on the taskbar | The switch itself. Needs the taskbar widget, which has to be on first |
+| Show lyrics on the taskbar | The switch itself. Needs the taskbar widget |
 | Lyrics font size | In pixels. Shrinks automatically when the taskbar is too short |
 | Show translation line | Second line shows the translation when available, otherwise the next line |
 | Word-by-word highlight | Light up the current line as it is sung. Off saves CPU |
@@ -111,81 +146,36 @@ All of them are on the **Lyrics** page in the settings.
 
 Lyrics are looked up from QQ Music, Kugou, NetEase Cloud Music and LRCLIB, in that order. The first play of a track needs a network lookup; results are cached locally afterwards.
 
-> **Players that don't report playback position.** NetEase Cloud Music, Kugou and similar players leave the Windows media timeline at zero — the position stays at `00:00` and never advances. FluentFlyout detects this and counts from the moment playback starts instead, so lyrics still scroll. If you resume mid-track or seek, the count is off by however far you jumped; correct it with the per-track offset above.
+## Relationship with upstream
 
-## Flyouts and more 🎵
-<div align="center">
-	<img height="205px" width="auto" src="https://github.com/user-attachments/assets/4dab1c12-594a-4785-bddc-0da1783bf1c8"> <img height="205px" src="https://github.com/user-attachments/assets/b4306026-b274-418b-a39e-78877e7610a7"> 	<img height="190px" src="https://github.com/user-attachments/assets/39de69fe-54c8-4b22-880c-7f0370b8dd9c"> <img height="190px" src="https://github.com/user-attachments/assets/a25adb0e-963a-49a5-8abb-d9a288c2ad9a"> <img height="190px" src="https://github.com/user-attachments/assets/2de44e7b-7e6c-4575-bf3b-0be2f741c994">
-</div>
-<details open>
-<summary>v2.0 screenshots</summary>
-<div align="center">
-	<img height="220px" width="auto" src="https://github.com/user-attachments/assets/e45592d5-8576-4d6a-8679-56baacccd585"> <img height="220px" width="auto" src="https://github.com/user-attachments/assets/ff2fcfab-8e24-48cf-9bdf-d35252eb3e67">
-</div>
-</details>
+- Upstream: [unchihugo/FluentFlyout](https://github.com/unchihugo/FluentFlyout). All credit for the original app goes there.
+- Upstream changes are merged **monthly**, as merge commits rather than squashes so the ancestry stays intact and the next merge doesn't replay the same diff.
+- This fork's own work sits on top; conflicts are resolved by hand rather than silently dropped.
 
-## How to install 📥
-### Using Microsoft Store (recommended)
-<a href="https://apps.microsoft.com/detail/9n45nsm4tnbp?referrer=appbadge&cid=GitHub_README_2&mode=direct">
-	<img src="https://get.microsoft.com/images/en-us%20dark.svg" width="300"/>
-</a>
-  
-(Find other download options on our [download page](https://fluentflyout.com/download/))
+## Known differences
 
-### Using the manual installer
-1. Go to our website's [download page](https://fluentflyout.com/download/)
-2. Download the manual installer *(GitHub release (x64))*
-3. Run the installer (**FluentFlyout_Installer.bat**) and follow the instructions. If you prefer to install without the installer, follow the instructions in the **"Using .msixbundle installer"** section below.
-
-### Using .msixbundle installer
-1. Find and download the **"*.cer"** file
-2. Open the certificate and press **"Install Certificate..."**
-3. On the Certificate Import Wizard, select **"Local Machine"**, press **"Next"** and grant Admin Access
-4. Select **"Place all certificates in the following store"**, then **"Browse..."**, choose **"Trusted Root Certification Authorities"** and **"OK"**
-5. Finally, press **"Next"** and then **"Finish"**. It might ask you to confirm, press **Yes**
-6. Download the **"*.msixbundle"** file
-7. The App Installer will pop up, press **"Install"**, or **"Update"** if you've installed FluentFlyout before
-
-## Contributing 💖
-Please feel free to contribute in any way you can! Check out [CONTRIBUTING.md](https://github.com/unchihugo/FluentFlyout/blob/master/.github/CONTRIBUTING.md) to get started.
-If you want to help with translations, please visit our [Weblate page](https://hosted.weblate.org/engage/fluentflyout/).
-If you're touching the lyrics pipeline, read [docs/lyrics-integration/architecture.md](docs/lyrics-integration/architecture.md) first — it documents the layer boundaries and the timing rules that aren't obvious from the code.
-
-### Translation Status
-<a href="https://hosted.weblate.org/engage/fluentflyout/">
-<img src="https://hosted.weblate.org/widget/fluentflyout/multi-auto.svg" alt="Translation status" />
-</a>
-
-### Thanks to our amazing team of contributors!
-<a href="https://github.com/unchihugo/fluentflyout/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=unchihugo/fluentflyout&anon=1" />
-</a>
-
-## Sustainability & The Microsoft Store 💰
-FluentFlyout is and always will be free and open-source. You can download the latest builds from the [Releases](https://github.com/unchihugo/FluentFlyout/releases/latest) tab or compile the project yourself to access the full feature set without restrictions.
-
-Maintaining a project of this scale takes time and effort. To support ongoing development, the Microsoft Store version offers a convenient way to install the app and includes a few optional features unlockable via a small payment (€2.99, varies by region).
-
-- **Microsoft Store version:** provides automatic background updates and one-click installation. A small set of features is unlocked with a one-time purchase to help fund development.
-- **GitHub version:** Completely free, fully featured, and open-source. The only trade-off is that updates and installation must be done manually.
-
-Thank you for your support and understanding!
+- Only the **English and Simplified Chinese** dictionaries carry the new product name. Dutch and Turkish use possessive suffixes (`FluentFlyout's`, `FluentFlyout'un`) that a blind rename would turn into broken grammar, and the remaining 27 languages are maintained upstream on Weblate — renaming them here would only create merge conflicts. This is a trade-off, not an oversight.
+- The root namespace is still `FluentFlyoutWPF`. It is an internal identifier; renaming it would touch 127 files with zero user-visible benefit.
+- The MSIX packaging path is defined but not exercised: there is no Store signing certificate in this repository.
 
 ## Credits 🙌
-- [Hugo Li](https://unchihugo.github.io) - Original Developer, Microsoft Store Publisher, CN & NL Translations
-- [LiAuTraver](https://github.com/LiAuTraver) - Code Contributor (app theme switcher)
-- [AksharDP](https://github.com/AksharDP) - Code Contributor (media seekbar & duration)
-- [Hykerisme](https://github.com/Hykerisme) - CN Translation
-- [nopeless](https://github.com/nopeless) - Code Contributor (QoL features)
-- All our amazing contributors! Check the full list on our [GitHub Contributors page](https://github.com/unchihugo/FluentFlyout/graphs/contributors?all=1)
+
+- [Hugo Li](https://unchihugo.github.io) — original developer of FluentFlyout, Microsoft Store publisher, CN & NL translations
+- [ANYNC](https://github.com/ANYNC/TaskbarLyrics) — TaskbarLyrics, whose Core layer the lyrics engine was ported from
+- [LiAuTraver](https://github.com/LiAuTraver), [AksharDP](https://github.com/AksharDP), [nopeless](https://github.com/nopeless) — upstream code contributors
+- [Hykerisme](https://github.com/Hykerisme) — upstream CN translation
+
+## License
+
+GPL-3.0-or-later, inherited from FluentFlyout — see [LICENSE](LICENSE). The TaskbarLyrics-derived core keeps its MIT notice in [LICENSE-TaskbarLyrics](LICENSE-TaskbarLyrics). Third-party components are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ### Dependencies
+
 - [CommunityToolkit.Mvvm](https://github.com/CommunityToolkit/dotnet)
 - [Dubya.WindowsMediaController](https://github.com/DubyaDude/WindowsMediaController)
 - [MicaWPF](https://github.com/Simnico99/MicaWPF)
 - [Microsoft.Toolkit.Uwp.Notifications](https://github.com/CommunityToolkit/WindowsCommunityToolkit)
 - [NAudio](https://github.com/naudio/NAudio)
 - [NLog](https://nlog-project.org/)
-- [System.Drawing.Common](https://dot.net/)
 - [unchihugo.WPF-UI](https://github.com/unchihugo/wpfui)
 - [WPF-UI-Tray](https://github.com/lepoco/wpfui)
