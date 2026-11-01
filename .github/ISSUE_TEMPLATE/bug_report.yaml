@@ -18,7 +18,7 @@ body:
 
         Before continuing, confirm that you have done the following:
 
-        * I have searched that there is no [existing bug report](https://github.com/unchihugo/FluentFlyout/issues?q=is%3Aissue%20state%3Aopen%20label%3Abug) regarding my issue
+        * I have searched that there is no [existing bug report](https://github.com/DC1024/FluentFlyout/issues?q=is%3Aissue%20state%3Aopen%20label%3Abug) regarding my issue
         * I have read the [FAQ page](https://fluentflyout.com/faq/) and there is no answer to my issue
         
   - type: textarea
