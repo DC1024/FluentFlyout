@@ -8,7 +8,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-GPL--3.0-blue"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-lightgrey">
   <img alt="Upstream" src="https://img.shields.io/badge/upstream-FluentFlyout%202.16-informational">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-881%20cases-success">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-900%20cases-success">
 </p>
 
 <p align="center">
@@ -32,7 +32,7 @@ FluentFlyout Lyrics 是 [FluentFlyout](https://github.com/unchihugo/FluentFlyout
 | **任务栏歌词** | ❌ | ✅ 逐字点亮 · 翻译行 · 竖排 · 每曲偏移 |
 | 歌词音源 | — | QQ 音乐 · 酷狗 · 网易云 · LRCLIB |
 | 开机自启的表现 | 弹出设置窗口 | 静默进托盘 |
-| 歌词链路测试 | — | 881 个自动化用例 |
+| 歌词链路测试 | — | 900 个自动化用例 |
 
 ### 1. 任务栏歌词 🎤
 
@@ -63,6 +63,7 @@ FluentFlyout Lyrics 是 [FluentFlyout](https://github.com/unchihugo/FluentFlyout
 - **每曲偏移** — 按毫秒把歌词提前或延后，按歌曲单独保存
 - **自定义颜色与对齐** — 跟随系统主题，或自己填 `#RRGGBB` / `#AARRGGBB` / `#RGB`
 - **可与频谱共存** — 两个可以同时开，共用可用宽度
+- **制作名单不再进胶囊** — 中文音源会把开片标题卡和整块片尾制作名单当成**带时间轴的歌词行**下发，标题卡要播三十秒，名单里那条中英双语的录音人员还能把整首歌的宽度顶到任务栏上限。现在两者在排版前就被剔掉，胶囊按真歌词宽度走
 
 ### 2. 开机不再弹设置窗口
 
@@ -91,7 +92,7 @@ FluentFlyout Lyrics 是 [FluentFlyout](https://github.com/unchihugo/FluentFlyout
 
 ### 5. 工程
 
-- **881 个测试用例**，分布在 531 个 `[Fact]` 与 88 个 `[Theory]` 方法里（一个 theory 的每条数据行会展开成独立用例）。歌词引擎不引用 `System.Windows`，所以检索、解析、时间轴与排版计算全都不需要 UI 线程就能断言
+- **900 个测试用例**，分布在 550 个 `[Fact]` 与 88 个 `[Theory]` 方法里（一个 theory 的每条数据行会展开成独立用例）。歌词引擎不引用 `System.Windows`，所以检索、解析、时间轴与排版计算全都不需要 UI 线程就能断言
 - **72 张截图的视觉验收矩阵**，覆盖四个任务栏方向 × 深浅色 × 多种缩放比例
 - 一道 CI 门禁：图标名必须是真实存在的枚举值——正是上面那个崩溃的同类问题
 - 便携版出包工作流，下载解压即可测试
@@ -128,6 +129,8 @@ dotnet publish FluentFlyoutWPF/FluentFlyout.csproj -c "GitHub Release" -r win-x6
 3. 运行一次 `FluentFlyoutLyrics.exe`——它会把自启项改写成指向自己
 
 不要让两个版本同时跑：它们共用同一个互斥量，后来的那个会直接退出。
+
+在本仓库的版本之间升级则不需要这套交接——设置、歌词缓存和单例标识都放在安装目录之外，把整个目录替换掉就算升级完了。
 
 ## 设置项
 

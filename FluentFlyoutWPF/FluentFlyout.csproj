@@ -19,6 +19,15 @@
     <Platforms>x64;ARM64</Platforms>
 	<RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <LangVersion>preview</LangVersion>
+    <!--
+      版本号只在这里维护，CHANGELOG.md 与发布 tag 都以它为准。
+      不写的话 SDK 会自己编一个 FileVersion 出来（实测形如 1.0.0.058.2019624710083，
+      五段、带日期编码），排障时没法一眼比对用户装的是哪版。
+
+      MSIX 包的版本号是另一套：来自 FluentFlyoutMSIX/Package.appxmanifest
+      的 Identity Version（跟着上游 2.16.1 走），与本项无关，改这里不会影响装包。
+    -->
+    <Version>1.0.0</Version>
     <Configurations>Debug;Release;GitHub Release</Configurations>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

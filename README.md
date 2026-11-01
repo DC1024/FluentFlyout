@@ -8,7 +8,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-GPL--3.0-blue"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-lightgrey">
   <img alt="Upstream" src="https://img.shields.io/badge/upstream-FluentFlyout%202.16-informational">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-881%20cases-success">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-900%20cases-success">
 </p>
 
 <p align="center">
@@ -32,7 +32,7 @@ It is an enhancement, not a rewrite — upstream changes are merged monthly.
 | **Taskbar lyrics** | ❌ | ✅ word-by-word · translation line · vertical taskbars · per-track offset |
 | Lyrics sources | — | QQ Music · Kugou · NetEase Cloud Music · LRCLIB |
 | Autostart behaviour | opens the settings window | starts silently in the tray |
-| Lyrics pipeline tests | — | 881 automated cases |
+| Lyrics pipeline tests | — | 900 automated cases |
 
 ### 1. Taskbar lyrics 🎤
 
@@ -63,6 +63,7 @@ The largest addition. Lyrics replace the title and artist inside the taskbar wid
 - **Per-track offset** — nudge lyrics earlier or later in milliseconds; saved per track
 - **Custom colour and alignment** — follow the system theme, or set your own `#RRGGBB` / `#AARRGGBB` / `#RGB`
 - **Runs alongside the visualizer** — both can be enabled at once and share the available width
+- **Credit blocks kept out of the capsule** — Chinese sources ship the opening title card and the full credit roll as *timed lyric lines*, which used to play for thirty seconds and stretch the whole song's width to the taskbar ceiling. Both are now dropped before layout, so the capsule is sized by real lyrics
 
 ### 2. Silent autostart
 
@@ -91,7 +92,7 @@ This fork passes a `--minimized` flag from the autostart entry, treats a second 
 
 ### 5. Engineering
 
-- **881 test cases**, spread across 531 `[Fact]` and 88 `[Theory]` methods (a theory's data rows each expand into their own case). The lyrics engine is kept free of `System.Windows`, so retrieval, parsing, timing and layout maths are all testable without a UI thread
+- **900 test cases**, spread across 550 `[Fact]` and 88 `[Theory]` methods (a theory's data rows each expand into their own case). The lyrics engine is kept free of `System.Windows`, so retrieval, parsing, timing and layout maths are all testable without a UI thread
 - A **72-screenshot visual acceptance matrix** covering four taskbar orientations × light/dark × multiple DPI scales
 - A CI gate that rejects icon names which aren't real enum values — the class of bug that crashed the settings page
 - A portable build workflow, so a testable binary is one download away
@@ -128,6 +129,8 @@ The executable name did change though, so hand over once:
 3. Run `FluentFlyoutLyrics.exe` once — it rewrites the autostart entry to point at itself
 
 Don't run both at once: they share the mutex, so the second one simply exits.
+
+Upgrading **between releases of this fork** needs none of that. Settings, the lyric cache and the single-instance identity all live outside the install folder, so replacing the folder is the entire procedure.
 
 ## Settings
 
