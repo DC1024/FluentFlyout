@@ -104,9 +104,11 @@ FluentFlyout Lyrics 是 [FluentFlyout](https://github.com/unchihugo/FluentFlyout
 
 ### 1. 下载构建好的便携包（推荐）
 
-打开[便携版构建工作流](https://github.com/DC1024/FluentFlyout/actions/workflows/build-portable.yml)，选一次成功的运行，下载 `FluentFlyoutLyrics-portable-win-x64.zip`，解压后双击 `FluentFlyoutLyrics.exe`。
+从[最新发布](https://github.com/DC1024/FluentFlyout/releases/latest)下载 `FluentFlyoutLyrics-portable-win-x64.zip`（[直链](https://github.com/DC1024/FluentFlyout/releases/latest/download/FluentFlyoutLyrics-portable-win-x64.zip)），解压后双击 `FluentFlyoutLyrics.exe`。
 
 需要 [.NET 10 桌面运行时](https://dotnet.microsoft.com/download/dotnet/10.0)。
+
+想比最近一次发布更新？每次推送 `master` 也会构建同样的 zip，去[便携版构建工作流](https://github.com/DC1024/FluentFlyout/actions/workflows/build-portable.yml)取即可。那条路要登录 GitHub，且产物 30 天过期，所以推荐走发布页。
 
 ### 2. 自己编译
 

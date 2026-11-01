@@ -8,9 +8,15 @@ below is this fork's own history, not upstream's.
 
 ## [Unreleased]
 
+### Changed
+
+- Install instructions point at the release page now. The old advice — dig a zip out of the Actions
+  artifacts — still works for unreleased `master` builds, but those need a GitHub login and expire
+  after thirty days, which is a poor first experience for a release
+
 ## [1.0.0] — 2026-11-01
 
-First release. 26 pull requests, 2026-10-27 → 2026-11-01.
+First release. 27 pull requests, 2026-10-27 → 2026-11-01.
 
 ### Added
 
