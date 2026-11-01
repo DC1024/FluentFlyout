@@ -1,5 +1,8 @@
 # These are supported funding model platforms
 
+# 指向原版作者 Hugo Li：这个分支的代码绝大部分来自 FluentFlyout——弹窗、任务栏
+# 小组件、Fluent 2 主题全都是他的工作。如果本项目对你有用，支持他才是对的去处。
+# 本分支没有自己的赞助渠道。
 github: unchihugo
 patreon: # Replace with a single Patreon username
 open_collective: # Replace with a single Open Collective username
