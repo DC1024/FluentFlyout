@@ -271,6 +271,7 @@ public sealed class LyricSyncService : IDisposable
 
         var document = ResolvedLyricsCompatibilityProjector.ToLyricDocument(
             resolved,
+            track,
             includeInformationLines: false);
         if (document.Lines.Count == 0)
         {
@@ -280,7 +281,7 @@ public sealed class LyricSyncService : IDisposable
         CancelPendingSearch();
         _currentTrack = track;
         _currentDocument = document;
-        PublishTrackEndEstimate(ResolveTrackEndEstimate(resolved, document));
+        PublishTrackEndEstimate(ResolveTrackEndEstimate(resolved));
         _currentDocumentHasTranslation = document.Lines.Any(
             line => !string.IsNullOrWhiteSpace(line.Translation));
         _currentLyricSourceApp = resolved.ProviderId.Value;
@@ -313,22 +314,28 @@ public sealed class LyricSyncService : IDisposable
     /// 算出这份歌词对应的曲终时刻。真实时长优先，其次末行时间加尾奏余量。
     /// </summary>
     /// <remarks>
+    /// <para>
     /// 末行时间只是「最后一句开口的时刻」，真实曲终至少还要加上这一句唱完的时长
     /// 和尾奏，所以退化值必然偏短。偏短的后果是「归位偏早」：第二遍开头的
     /// 几句歌词会领先于声音。这与「永远停在最后一行」相比仍然是更好的失败模式，
     /// 而且用户可以用单曲偏移把它校回来（偏移按曲目存储，调一次永久生效）。
+    /// </para>
+    /// <para>
+    /// 这里刻意用<b>未过滤</b>的原始行算末行：片尾制作名单常常一直排到曲终前几秒，
+    /// 拿过滤后的文档会把估计提前十几秒，单曲循环第二遍就会提早归位。
+    /// </para>
     /// </remarks>
-    private static TimeSpan? ResolveTrackEndEstimate(ResolvedLyrics resolved, LyricDocument document)
+    private static TimeSpan? ResolveTrackEndEstimate(ResolvedLyrics resolved)
     {
         if (resolved.SourceTrackDuration is { } duration)
         {
             return duration;
         }
 
-        if (document.Lines.Count > 0 &&
-            document.Lines[^1].Timestamp > TimeSpan.Zero)
+        if (resolved.Content.Lines.Count > 0 &&
+            resolved.Content.Lines[^1].StartTime > TimeSpan.Zero)
         {
-            return document.Lines[^1].Timestamp + EstimatedTailMargin;
+            return resolved.Content.Lines[^1].StartTime + EstimatedTailMargin;
         }
 
         return null;
@@ -382,6 +389,7 @@ public sealed class LyricSyncService : IDisposable
                 ? null
                 : ResolvedLyricsCompatibilityProjector.ToLyricDocument(
                     resolved,
+                    track,
                     includeInformationLines: false);
             if (resolved is not null &&
                 document is { Lines.Count: > 0 } &&
@@ -389,7 +397,7 @@ public sealed class LyricSyncService : IDisposable
                 _currentTrackId == trackId)
             {
                 _currentDocument = document;
-                PublishTrackEndEstimate(ResolveTrackEndEstimate(resolved, document));
+                PublishTrackEndEstimate(ResolveTrackEndEstimate(resolved));
                 _currentDocumentHasTranslation = document.Lines.Any(
                     line => !string.IsNullOrWhiteSpace(line.Translation));
                 _currentLyricSourceApp = resolved.ProviderId.Value;

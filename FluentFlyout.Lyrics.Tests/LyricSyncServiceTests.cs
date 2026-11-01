@@ -210,6 +210,47 @@ public sealed class LyricSyncServiceTests
     }
 
     /// <summary>
+    /// 曲终估计必须用**未过滤**的原始行来算。
+    ///
+    /// 片尾制作名单常常一直排到曲终前几秒，而它在显示前会被剔除。若拿过滤后的文档
+    /// 取末行，估计会从 4:02.9 退到 3:49.9——单曲循环第二遍就会提前归位，
+    /// 表现为「歌还没放完，歌词已经跳回第一句」。
+    /// </summary>
+    [Fact]
+    public async Task TryApplyResolvedLyrics_EstimatesTrackEndFromUnfilteredLines()
+    {
+        using var service = new LyricSyncService(
+            new LateFailureCoordinator(),
+            metadataStabilizationDelay: TimeSpan.Zero);
+        var track = CreateTrack(title: "烧");
+        await service.GetDisplayFrameAsync(new PlaybackSnapshot(true, TimeSpan.Zero, track));
+
+        var resolved = new ResolvedLyrics(
+            new ParsedLyrics(
+                [
+                    new ParsedLyricLine(TimeSpan.Zero, null, "烧 - 林忆莲"),
+                    new ParsedLyricLine(TimeSpan.FromSeconds(220), null, "怨也要烧"),
+                    new ParsedLyricLine(
+                        TimeSpan.FromSeconds(242),
+                        null,
+                        "母带后期工作室 Mastering Studio：全区通行录音室 All Access Studio")
+                ],
+                LyricTimingKind.LineTimed,
+                LyricTimingProvenance.ProviderSupplied,
+                LyricPayloadFormat.Lrc),
+            new LyricProviderId("Test"),
+            "timed-candidate",
+            LyricAcquisitionKind.Remote,
+            new Dictionary<string, string>(),
+            sourceTrackDuration: null);
+
+        Assert.True(service.TryApplyResolvedLyrics(track, resolved));
+
+        // 220 秒是最后一句真歌词，但曲终要按 242 秒那行元信息推。
+        Assert.Equal(TimeSpan.FromSeconds(272), service.CurrentTrackEndEstimate);
+    }
+
+    /// <summary>
     /// 换歌必须把旧曲长清掉并通知出去。否则新歌会沿用上一首的长度，
     /// 在错误的位置归零——表现为「歌词突然跳回第一句」。
     /// </summary>
@@ -333,6 +374,8 @@ public sealed class LyricSyncServiceTests
     [Fact]
     public async Task GetDisplayFrameAsyncUsesOneResolvedResultAndExcludesInformationLines()
     {
+        // 第三行刻意用普通歌词：像 "Composer: The Band" 这种带制作标签的写法
+        // 现在会被信息行判据一起剔掉，用它当「普通歌词」会掩盖真正要验的东西。
         var coordinator = new ImmediateCoordinator(CreateResolved(
             "information-filter",
             new ParsedLyricLine(TimeSpan.Zero, null, "Opening"),
@@ -341,7 +384,7 @@ public sealed class LyricSyncServiceTests
                 null,
                 "Lyrics provided by Example",
                 isInformationLine: true),
-            new ParsedLyricLine(TimeSpan.FromSeconds(10), null, "Composer: The Band")));
+            new ParsedLyricLine(TimeSpan.FromSeconds(10), null, "Second verse")));
         using var service = new LyricSyncService(
             coordinator,
             metadataStabilizationDelay: TimeSpan.Zero);
@@ -349,7 +392,7 @@ public sealed class LyricSyncServiceTests
 
         var frame = await service.GetDisplayFrameAsync(snapshot);
 
-        Assert.Equal("Composer: The Band", frame.CurrentLine);
+        Assert.Equal("Second verse", frame.CurrentLine);
         Assert.Equal(1, frame.CurrentLineIndex);
         Assert.NotEqual("Lyrics provided by Example", frame.CurrentLine);
         Assert.NotEqual("Lyrics provided by Example", frame.NextLine);
