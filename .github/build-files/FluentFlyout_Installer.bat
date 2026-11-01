@@ -1,11 +1,11 @@
 @echo off
-TITLE FluentFlyout Installer
+TITLE FluentFlyout Lyrics Installer
 CLS
 
 SET AppNamePattern=*FluentFlyout*
 
 ECHO ===================================================
-ECHO   Installing FluentFlyout...
+ECHO   Installing FluentFlyout Lyrics...
 ECHO   Please follow the prompts in the blue window.
 ECHO ===================================================
 ECHO.
@@ -27,7 +27,7 @@ ECHO Installation complete. Launching App...
 
 :: This PowerShell command finds the Package Family Name of the app we just installed
 :: and launches it using the "shell:AppsFolder" protocol.
-PowerShell -Command "& { $pkg = Get-AppxPackage '%AppNamePattern%' | Select-Object -First 1; if ($pkg) { $exe = Join-Path $pkg.InstallLocation 'FluentFlyout\FluentFlyout.exe'; Start-Process $exe } else { Write-Host 'Could not find installed App.' } }"
+PowerShell -Command "& { $pkg = Get-AppxPackage '%AppNamePattern%' | Select-Object -First 1; if ($pkg) { $exe = Join-Path $pkg.InstallLocation 'FluentFlyoutLyrics\FluentFlyoutLyrics.exe'; Start-Process $exe } else { Write-Host 'Could not find installed App.' } }"
 
 :: Close this installer window automatically
 EXIT

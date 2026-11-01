@@ -1,12 +1,11 @@
 name: Build and Package MSIX
 
 on:
+  # 本 fork 没有 Microsoft Store 的签名证书（MSIX_CERT_BASE64），这条工作流
+  # 只能在具备证书的环境里手动跑。原先的 push 触发会在每次改动
+  # Package.appxmanifest 时自动开跑，然后在解码证书那一步必然失败，
+  # 所以这里只保留手动触发。
   workflow_dispatch:
-  push:
-    branches:
-      - master
-    paths:
-      - 'FluentFlyoutMSIX/Package.appxmanifest'
 
 permissions:
   contents: read
@@ -69,5 +68,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: FluentFlyout_${{ env.APP_VERSION }}_${{ env.PLATFORM }}_${{ matrix.configuration == 'GitHub Release' && 'Installer' || 'Release' }}
+          name: FluentFlyoutLyrics_${{ env.APP_VERSION }}_${{ env.PLATFORM }}_${{ matrix.configuration == 'GitHub Release' && 'Installer' || 'Release' }}
           path: InstallerOutput\
