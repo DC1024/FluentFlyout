@@ -110,7 +110,7 @@ jobs:
         shell: pwsh
         run: |
           $dir = "publish/${{ matrix.rid }}"
-          $required = @('FluentFlyout.exe', 'FluentFlyout.dll', 'FluentFlyout.Lyrics.dll')
+          $required = @('FluentFlyoutLyrics.exe', 'FluentFlyoutLyrics.dll', 'FluentFlyout.Lyrics.dll')
           $missing = @()
           foreach ($f in $required) {
             if (-not (Test-Path (Join-Path $dir $f))) { $missing += $f }
@@ -134,10 +134,10 @@ jobs:
         if: steps.skip.outputs.skip != 'true'
         shell: pwsh
         run: |
-          $zip = "FluentFlyout-portable-${{ matrix.rid }}.zip"
+          $zip = "FluentFlyoutLyrics-portable-${{ matrix.rid }}.zip"
           Compress-Archive -Path "publish/${{ matrix.rid }}/*" -DestinationPath $zip -CompressionLevel Optimal
           Get-Item $zip | ForEach-Object {
-            "下载后解压，双击 FluentFlyout.exe 即可运行（需 .NET 10 桌面运行时）。" |
+            "下载后解压，双击 FluentFlyoutLyrics.exe 即可运行（需 .NET 10 桌面运行时）。" |
               Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
           }
 
@@ -145,7 +145,7 @@ jobs:
         if: steps.skip.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: FluentFlyout-portable-${{ matrix.rid }}
-          path: FluentFlyout-portable-${{ matrix.rid }}.zip
+          name: FluentFlyoutLyrics-portable-${{ matrix.rid }}
+          path: FluentFlyoutLyrics-portable-${{ matrix.rid }}.zip
           if-no-files-found: error
           retention-days: 30

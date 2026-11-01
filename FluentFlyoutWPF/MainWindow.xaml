@@ -266,7 +266,7 @@
             LeftClick="nIcon_LeftClick" FocusOnLeftClick="False"
             x:Name="nIcon"
             MenuOnRightClick="True"
-            TooltipText="FluentFlyout"
+            TooltipText="FluentFlyout Lyrics"
             Icon="/Resources/FluentFlyout2.ico"
             Margin="0,127,0,114" Visibility="Collapsed">
             <tray:NotifyIcon.Menu>

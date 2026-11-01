@@ -14,8 +14,8 @@
     Version="2.16.1.0" />
 
   <Properties>
-    <DisplayName>FluentFlyout</DisplayName>
-    <PublisherDisplayName>unchihugo</PublisherDisplayName>
+    <DisplayName>FluentFlyout Lyrics</DisplayName>
+    <PublisherDisplayName>DC1024</PublisherDisplayName>
     <Logo>Images\StoreLogo.png</Logo>
   </Properties>
 
@@ -57,10 +57,10 @@
       Executable="$targetnametoken$.exe"
       EntryPoint="$targetentrypoint$">
       <uap:VisualElements
-        DisplayName="FluentFlyout"
+        DisplayName="FluentFlyout Lyrics"
         BackgroundColor="transparent"
-        Square150x150Logo="Images\Square150x150Logo.png" Square44x44Logo="Images\FluentFlyout.png" Description="FluentFlyout is a simple and modern audio flyout for Windows, built with Fluent 2 Design principles. The UI seemingly blends in with Windows 10/11, providing you an uninterrupted, clean, and native-like experience when controlling your media.">
-        <uap:DefaultTile Wide310x150Logo="Images\Wide310x150Logo.png"  ShortName="FluentFlyout" Square71x71Logo="Images\SmallTile.png" Square310x310Logo="Images\LargeTile.png">
+        Square150x150Logo="Images\Square150x150Logo.png" Square44x44Logo="Images\FluentFlyout.png" Description="FluentFlyout Lyrics is a fork of FluentFlyout that adds a full taskbar lyrics engine, silent autostart and a set of stability fixes on top of the original Fluent 2 media flyout.">
+        <uap:DefaultTile Wide310x150Logo="Images\Wide310x150Logo.png"  ShortName="FluentFlyout Lyrics" Square71x71Logo="Images\SmallTile.png" Square310x310Logo="Images\LargeTile.png">
           <uap:ShowNameOnTiles>
             <uap:ShowOn Tile="wide310x150Logo"/>
             <uap:ShowOn Tile="square150x150Logo"/>
@@ -73,7 +73,7 @@
 				<desktop:StartupTask
 				  TaskId="FluentFlyoutStartup"
 				  Enabled="true"
-				  DisplayName="FluentFlyout"/>
+				  DisplayName="FluentFlyout Lyrics"/>
 			</desktop:Extension>
 
 			<desktop:Extension Category="windows.toastNotificationActivation">
@@ -81,9 +81,16 @@
 				  ToastActivatorCLSID="79086E7F-0D65-4507-82B6-85F2288930D5"/>
 			</desktop:Extension>
 			
+			<!--
+			  包内子目录名取自 entry point 项目的 AssemblyName，exe 名同源。
+			  $targetnametoken$（上面 Application/@Executable）由打包工具自动替换，
+			  这里的手写路径必须跟着 AssemblyName 一起改。
+			  注：本 fork 没有 Microsoft Store 签名证书，不分发 MSIX，这条路径
+			  未经真机安装验证。
+			-->
 			<com:Extension Category="windows.comServer">
 				<com:ComServer>
-					<com:ExeServer Executable="FluentFlyout\FluentFlyout.exe" Arguments="-ToastActivated" DisplayName="View Changes">
+					<com:ExeServer Executable="FluentFlyoutLyrics\FluentFlyoutLyrics.exe" Arguments="-ToastActivated" DisplayName="View Changes">
 						<com:Class Id="79086E7F-0D65-4507-82B6-85F2288930D5" DisplayName="View Changes"/>
 					</com:ExeServer>
 				</com:ComServer>

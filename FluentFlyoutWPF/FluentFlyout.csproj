@@ -8,7 +8,14 @@
     <UseWindowsForms>False</UseWindowsForms>
     <RootNamespace>FluentFlyoutWPF</RootNamespace>
     <StartupObject>FluentFlyoutWPF.App</StartupObject>
-    <AssemblyName>$(MSBuildProjectName)</AssemblyName>
+    <!--
+      产品显示名是 FluentFlyout Lyrics；程序集名不能带空格，也不能取
+      FluentFlyout.Lyrics —— 那是歌词引擎库的 AssemblyName，同目录下两者的
+      .dll 会互相覆盖。所以 exe 用无点号的 FluentFlyoutLyrics。
+      根命名空间保持 FluentFlyoutWPF 不动：那是纯内部标识，改它要动 127 个
+      文件、零用户可见收益，且不影响与上游合并。
+    -->
+    <AssemblyName>FluentFlyoutLyrics</AssemblyName>
     <Platforms>x64;ARM64</Platforms>
 	<RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <LangVersion>preview</LangVersion>

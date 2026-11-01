@@ -9,7 +9,7 @@
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     mc:Ignorable="d"
     Height="700" MinHeight="300" MinWidth="750" Width="900"
-    Title="FluentFlyout" Icon="/Resources/FluentFlyout2.ico"
+    Title="FluentFlyout Lyrics" Icon="/Resources/FluentFlyout2.ico"
     TextOptions.TextRenderingMode="ClearType" TextOptions.TextFormattingMode="Ideal"
     FontFamily="{Binding FontFamily}"
 	FlowDirection="{Binding FlowDirection}"
@@ -31,7 +31,7 @@
 
 		<ui:TitleBar
             x:Name="TitleBar"
-            Title="FluentFlyout"
+            Title="FluentFlyout Lyrics"
             Grid.Row="0"
             Panel.ZIndex="1"
 			HorizontalContentAlignment="Center"
