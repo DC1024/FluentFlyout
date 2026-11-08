@@ -112,7 +112,41 @@ public partial class MainWindow : MicaWindow
     private bool _displayRefreshInProgress;
     private bool _isCleaningUp;
 
-    internal static volatile bool ExplorerRestarting = false;
+    /// <summary>
+    /// Explorer 重启期间，一切任务栏交互都要让路的闸门。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 这里存的是**截止时间**而不是布尔量：布尔量只有成功路径会清零，
+    /// <see cref="WaitForExplorerReadyAsync"/> 一旦超时返回 <see langword="false"/>
+    /// （或抛异常），标志就会永久停在 <see langword="true"/>，之后
+    /// <c>TaskbarWindow.UpdatePosition</c> 每 1.5s 全部早退，小组件再也不会定位——
+    /// 只有重启应用才能恢复。用户报的「偶尔开机左下角控制窗消失、之后一直不回来」
+    /// 正是这类状态的典型表现。
+    /// </para>
+    /// <para>
+    /// 换成截止时间之后这个状态**结构上不可能卡死**：最坏情况是到期自动放行。
+    /// 窗口给 <see cref="ExplorerRestartGateMs"/>，比 60s 的等待上限还长，
+    /// 所以正常路径的行为与以前逐字一致，只在「等待失败」这条路上变安全。
+    /// </para>
+    /// </remarks>
+    private static long _explorerRestartGateUntil;
+
+    /// <summary>闸门最长关闭时长；必须大于 <see cref="WaitForExplorerReadyAsync"/> 的等待上限。</summary>
+    private const int ExplorerRestartGateMs = 90_000;
+
+    internal static bool ExplorerRestarting => Environment.TickCount64 < Interlocked.Read(ref _explorerRestartGateUntil);
+
+    /// <summary>关闸：在 <paramref name="milliseconds"/> 之内一律按「Explorer 重启中」处理。只延长不缩短。</summary>
+    internal static void HoldExplorerGate(int milliseconds)
+    {
+        long until = Environment.TickCount64 + milliseconds;
+        if (until > Interlocked.Read(ref _explorerRestartGateUntil))
+            Interlocked.Exchange(ref _explorerRestartGateUntil, until);
+    }
+
+    /// <summary>开闸：已确认 Explorer 就绪，或已确认没必要继续等。</summary>
+    internal static void ReleaseExplorerGate() => Interlocked.Exchange(ref _explorerRestartGateUntil, 0);
 
     public MainWindow()
     {
@@ -1906,7 +1940,7 @@ public partial class MainWindow : MicaWindow
         {
             Logger.Warn("Explorer restart detected (TaskbarCreated)");
 
-            ExplorerRestarting = true;
+            HoldExplorerGate(ExplorerRestartGateMs);
 
             // Defer recovery, do NOT touch tray/taskbar immediately
             Dispatcher.BeginInvoke(async () =>
@@ -1916,20 +1950,28 @@ public partial class MainWindow : MicaWindow
                     // Wait for Explorer to actually stabilize
                     if (await WaitForExplorerReadyAsync())
                     {
-                        ExplorerRestarting = false;
+                        ReleaseExplorerGate();
                         Logger.Info("Explorer stabilized, resuming taskbar integration");
 
                         // Now it is safe to recreate tray icon
                         RecreateTrayIconSafely();
+                        return;
                     }
-                    else
-                    {
-                        Logger.Warn("Explorer did not stabilize within timeout; keeping integration disabled");
-                    }
+
+                    // 以前这里只留一条 Warn 就结束，闸门就一直关着。
+                    // 现在照实放行：小组件带着 1.5s 心跳继续探测任务栏，
+                    // 真拿到有效几何才定位——比「永久停摆」安全得多。
+                    Logger.Warn("Explorer did not stabilize within timeout; releasing the gate so the widget keeps probing");
                 }
                 catch (Exception ex)
                 {
                     Logger.Error(ex, "Explorer recovery failed");
+                }
+                finally
+                {
+                    // 无论走哪条路都不能把闸门留在关闭状态（截止时间只是兜底，不是常态路径）。
+                    ReleaseExplorerGate();
+                    taskbarWindow?.ResumeAfterExplorerRecovery();
                 }
             }, DispatcherPriority.Background);
 

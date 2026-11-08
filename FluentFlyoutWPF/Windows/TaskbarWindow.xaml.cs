@@ -120,6 +120,15 @@ public partial class TaskbarWindow : Window
     private bool _positionUpdateInProgress;
 
     /// <summary>
+    /// 本窗口实例还没成功定位过。
+    /// </summary>
+    /// <remarks>
+    /// 只用来放行一条 Info —— 开机失败时最需要知道的就是「到底有没有排上过版」，
+    /// 而正常路径以前一个字都不写。每个窗口实例只写一次，不会刷日志。
+    /// </remarks>
+    private bool _logFirstPosition = true;
+
+    /// <summary>
     /// 有一次重排请求在「正在排」的时候到达，等这一轮结束补跑一次。
     /// </summary>
     /// <remarks>
@@ -507,7 +516,13 @@ public partial class TaskbarWindow : Window
             style = (style & ~WS_POPUP) | WS_CHILD;
             SetWindowLong(taskbarWindowHandle, GWL_STYLE, style);
 
-            SetParent(taskbarWindowHandle, taskbarHandle); // if this window is created faster than the Taskbar is loaded, then taskbarHandle will be NULL.
+            IntPtr previousParent = SetParent(taskbarWindowHandle, taskbarHandle); // if this window is created faster than the Taskbar is loaded, then taskbarHandle will be NULL.
+
+            // 开机早期 taskbarHandle 很可能是 0（窗口比任务栏先创建），
+            // 这一行是唯一能在事后区分「挂上了 / 挂空了」的记录。
+            Logger.Info(
+                $"Taskbar widget attached: taskbar=0x{taskbarHandle.ToInt64():X}, " +
+                $"main={isMainTaskbarSelected}, previousParent=0x{previousParent.ToInt64():X}");
 
             CalculateAndSetPosition(
                 taskbarHandle, taskbarWindowHandle, isMainTaskbarSelected, RepositionReason.Startup);
@@ -746,6 +761,28 @@ on_error:
         UpdatePosition(RepositionReason.Target);
     }
 
+    /// <summary>
+    /// Explorer 恢复之后叫醒一次重排，别干等下一个 1.5s 心跳。
+    /// </summary>
+    /// <remarks>
+    /// 由 <c>MainWindow</c> 在放开 <c>ExplorerRestarting</c> 闸门时调用。
+    /// 闸门关闭期间 <see cref="UpdatePosition"/> 全部早退，这里补的就是那一段空窗——
+    /// 不补的话小组件要等到下一次心跳才回来，用户看到的是「explorer 好了但它还不在」。
+    /// </remarks>
+    internal void ResumeAfterExplorerRecovery()
+    {
+        if (_isClosing)
+            return;
+
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(ResumeAfterExplorerRecovery, DispatcherPriority.Send);
+            return;
+        }
+
+        UpdatePosition(RepositionReason.Startup);
+    }
+
     private void CalculateAndSetPosition(
         IntPtr taskbarHandle,
         IntPtr taskbarWindowHandle,
@@ -770,7 +807,14 @@ on_error:
 
             // Guard against invalid DPI (e.g. during explorer restart when handle is stale)
             if (dpiScale <= 0)
+            {
+                // 以前这里是静默 return。代价是：开机时若任务栏还没出现
+                // （GetDpiForWindow(0) 恒为 0），窗口既不定位也不留痕，
+                // 用户报「偶尔开机不启动」时日志里一片空白，无从复盘。
+                // 消息刻意保持一致，好让 NLog 的 whenRepeated 把它压成一条 + 重复计数。
+                Logger.Warn($"Taskbar widget skipped positioning: taskbar handle not ready (taskbar=0x{taskbarHandle.ToInt64():X}).");
                 return;
+            }
 
             // Get Taskbar dimensions
             RECT taskbarRect;
@@ -833,6 +877,15 @@ on_error:
             var vRect = PositionVisualizer(taskbarHandle, taskbarRect, dpiScale, isMainTaskbarSelected, isVertical);
 
             UpdateWindowRegion(taskbarWindowHandle, wRect, vRect);
+
+            if (_logFirstPosition)
+            {
+                _logFirstPosition = false;
+                Logger.Info(
+                    $"Taskbar widget positioned (first time for this window): reason={reason}, " +
+                    $"origin=({containerPos.X},{containerPos.Y}), size={containerWidth}x{containerHeight}, " +
+                    $"widget={wRect}, visualizer={vRect}");
+            }
 
             // 这一轮已经排完版，目标才算「真正生效」——UIA/托盘句柄缓存以它为失效依据。
             _lastPositionedTargetKey = _target?.DevicePath;
