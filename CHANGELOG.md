@@ -10,6 +10,14 @@ below is this fork's own history, not upstream's.
 
 ### Fixed
 
+- Taskbar XAML lookups no longer block the UI thread. The calls already ran on the thread pool, but
+  the dispatcher thread then sat in `Wait(1000)` / `Wait(500)` for up to three elements per pass — 4.5
+  seconds of stall against a 1.5-second timer, measured in the wild as four query timeouts followed by
+  4.4 seconds without audio callbacks. Because the widget window is a cross-process child of the
+  taskbar, a blocked UI thread also stalls Explorer's synchronous messages and its own UIA walk into
+  that subtree, which is how a slow lookup turned into an unclickable taskbar. Probes now start
+  without waiting, are harvested when they finish, and a probe that finds a *changed* rectangle wakes
+  the layout up instead of the caller waiting for it
 - The widget no longer stays invisible for the rest of the session when Explorer takes longer than a
   minute to come back. The "Explorer is restarting" gate used to be a boolean that only the success
   path cleared, so a single timeout — or a single exception — froze taskbar integration until the app
