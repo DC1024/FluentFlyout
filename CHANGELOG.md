@@ -8,11 +8,23 @@ below is this fork's own history, not upstream's.
 
 ## [Unreleased]
 
+### Fixed
+
+- The widget no longer stays invisible for the rest of the session when Explorer takes longer than a
+  minute to come back. The "Explorer is restarting" gate used to be a boolean that only the success
+  path cleared, so a single timeout — or a single exception — froze taskbar integration until the app
+  was restarted; it is now a deadline that expires on its own, and recovery releases it on every path
+
 ### Changed
 
 - Install instructions point at the release page now. The old advice — dig a zip out of the Actions
   artifacts — still works for unreleased `master` builds, but those need a GitHub login and expire
   after thirty days, which is a poor first experience for a release
+- Startup is diagnosable from the log now: every widget gets one line when it attaches to a taskbar
+  (which handle, whether it fell back to the main bar) and one when it first manages to position
+  itself, plus a throttled warning when positioning is skipped because the taskbar handle is not
+  ready yet — that branch used to return silently, which is why "sometimes it doesn't come up after
+  boot" left nothing behind to look at. Ten log files are kept instead of three
 
 ## [1.0.0] — 2026-11-01
 
