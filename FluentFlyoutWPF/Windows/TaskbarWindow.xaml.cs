@@ -162,7 +162,57 @@ public partial class TaskbarWindow : Window
     private readonly long _repositionClockStart = Stopwatch.GetTimestamp();
 
     private bool _isClosing;
-    private readonly Dictionary<string, Task> _pendingAutomationTasks = [];
+
+    /// <summary>
+    /// 在途的 XAML 探测。每个元素最多一个，**调用方绝不等它**。
+    /// </summary>
+    /// <remarks>
+    /// 原来是 <c>Dictionary&lt;string, Task&gt;</c>，配合 <c>Task.Wait(1000)</c> 使用。
+    /// 等待发生在 UI 线程上，而本窗口是 explorer 任务栏的跨进程子窗口——
+    /// 线程一堵，explorer 对我们的同步消息与 UIA 查询也只能跟着等，
+    /// 表现为整条任务栏点不动、小组件也不再更新。现在改成「完成即用」。
+    /// </remarks>
+    private readonly Dictionary<string, Task<XamlProbeResult>> _pendingAutomationTasks = [];
+
+    /// <summary>
+    /// 上一次真正据以排版过的元素矩形，按元素名分。
+    /// </summary>
+    /// <remarks>
+    /// 只用于判断「新拿到的矩形有没有变」。没变就不叫醒重排——
+    /// 探测是 1.5s 心跳发起的，每次都重排会把重排预算吃光，小组件也会每 1.5s 抖一下。
+    /// </remarks>
+    private readonly Dictionary<string, Rect> _lastAppliedElementRects = [];
+
+    /// <summary>一次 XAML 探测超过这个时长就记一条 Warn（改动前超过 1000ms 直接算超时）。</summary>
+    private const int SlowAutomationQueryMs = 1000;
+
+    /// <summary>
+    /// 同一个元素两次探测之间的最小间隔。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 必须有这条：<c>UpdateUi</c> 结尾会按帧请求重排，歌词播放时一秒几十次。
+    /// 改动前每次调用都在 UI 线程上等到结果，等于被动限流；改成非阻塞之后，
+    /// 不去重就会变成**每帧发一轮 UIA 查询**——比原来更狠地压 explorer，
+    /// 与这次修复的目的正好相反。
+    /// </para>
+    /// <para>
+    /// 500ms 比 1.5s 的心跳更密，冷却不是瓶颈；它只是把帧驱动的洪峰削平。
+    /// </para>
+    /// </remarks>
+    private static readonly TimeSpan ProbeCooldown = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>一次探测超过这个时长还没回来就记一条 Warn，替代原来那条 "Timeout querying…"。</summary>
+    private static readonly TimeSpan StuckProbeWarnThreshold = TimeSpan.FromSeconds(5);
+
+    /// <summary>每个元素最近一次探测的发起时刻（单调时间戳）。</summary>
+    private readonly Dictionary<string, long> _lastProbeStarted = [];
+
+    /// <summary>
+    /// 一次探测的结果。<see cref="ElapsedMs"/> 用来保留「查询变慢」这条信号——
+    /// 以前它是 <c>Timeout querying…</c> 告警，改成非阻塞之后这条信息不能丢。
+    /// </summary>
+    private readonly record struct XamlProbeResult(bool Found, Rect Rect, AutomationElement? Element, long ElapsedMs);
 
     private GlobalSystemMediaTransportControlsSessionPlaybackStatus? _lastPlaybackStatus;
     private DispatcherTimer? _autoHideTimer;
@@ -614,6 +664,15 @@ on_error:
 
         /// <summary>窗口初次装配（<c>SetupWindow</c>）。</summary>
         Startup,
+
+        /// <summary>
+        /// XAML 探测拿到的元素矩形变了，补一次重排（见 <c>ScheduleRepositionAfterProbe</c>）。
+        /// </summary>
+        /// <remarks>
+        /// 单列一项是为了让预算告警能区分「谁在频繁请求」：这条来源本应极其罕见，
+        /// 一旦它出现在 <c>Summarize()</c> 的前排，说明元素矩形在反复抖动。
+        /// </remarks>
+        WidgetProbe,
     }
 
     private void UpdatePosition(RepositionReason reason = RepositionReason.Timer)
@@ -728,6 +787,10 @@ on_error:
         _trayElement = null;
         _taskbarFrameElement = null;
         _pendingAutomationTasks.Clear();
+        // 换了任务栏，上一次据以排版的矩形就不再可比——
+        // 不清掉的话新任务栏第一次探测出的矩形会被当成「没变」，重排被白白抑制。
+        _lastAppliedElementRects.Clear();
+        _lastProbeStarted.Clear();
     }
 
     /// <summary>
@@ -1607,101 +1670,185 @@ on_error:
         Widget.RefreshAppVolumeTooltip();
     }
 
+    /// <summary>
+    /// 取任务栏里某个 XAML 元素的屏幕矩形。**永不阻塞调用线程。**
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 这套查询必须跨进程进到 explorer 的 XAML 树，慢起来没有上限：开机、解锁、
+    /// 显示器重新协商这些时刻 explorer 的 UI 线程本身就忙，UIA 往返能耗上秒级。
+    /// 早先的写法是 <c>Task.Run</c> + <c>Wait(1000)</c> / <c>Wait(500)</c>——
+    /// 查询在后台跑，**但等待发生在 dispatcher 线程上**。而本窗口是任务栏的
+    /// 跨进程子窗口，我们的线程被堵住时 explorer 发来的同步消息、以及它回查
+    /// 我们这棵子树的 UIA，都只能跟着等 → 整条任务栏点不动、小组件也不再更新。
+    /// 这正是用户报的那个现象。
+    /// </para>
+    /// <para>
+    /// 现在分三步：没在途的就起一个（不等）、在途且没做完就按「这轮拿不到」处理、
+    /// 在途且做完了就收割。收割到**变化过的**矩形才叫醒一次重排，所以稳态下
+    /// 每 1.5s 仍是每元素一次查询——与改动前完全相同的流量，只是不再有同步等待。
+    /// </para>
+    /// </remarks>
     private (bool, Rect) GetTaskbarXamlElementRect(IntPtr taskbarHandle, ref AutomationElement? elementCache, string elementName)
     {
         if (taskbarHandle == IntPtr.Zero)
             return (false, Rect.Empty);
 
+        // reset if monitor changed
+        if (!IsPositionedForCurrentTarget())
+        {
+            elementCache = null;
+            _lastAppliedElementRects.Remove(elementName);
+        }
+
         try
         {
-            // reset if monitor changed
-            if (!IsPositionedForCurrentTarget())
-                elementCache = null;
-
-            // find widget in XAML
-            if (elementCache == null)
+            if (_pendingAutomationTasks.TryGetValue(elementName, out var pending))
             {
-                if (_pendingAutomationTasks.TryGetValue(elementName, out var pendingTask) && !pendingTask.IsCompleted)
-                    return (false, Rect.Empty);
-
-                AutomationElement? found = null;
-                var findTask = Task.Run(() =>
+                if (!pending.IsCompleted)
                 {
-                    var root = AutomationElement.FromHandle(taskbarHandle);
-                    found = root.FindFirst(TreeScope.Descendants,
-                        new PropertyCondition(AutomationElement.AutomationIdProperty, elementName));
-                });
-                _pendingAutomationTasks[elementName] = findTask;
+                    // 卡住的探测必须留痕：以前这种情况会打印 "Timeout querying…"，
+                    // 现在只是「等它做完」，但 UIA 真卡死时不能一声不响。
+                    // 每个元素最多一个在途，所以不会堆积线程；任务栏换掉时缓存整体清空。
+                    if (_lastProbeStarted.TryGetValue(elementName, out var stuckSince) &&
+                        Stopwatch.GetElapsedTime(stuckSince) >= StuckProbeWarnThreshold)
+                    {
+                        Logger.Warn("Taskbar XAML element query is still pending: " + elementName);
+                    }
 
-                if (!findTask.Wait(1000))
-                {
-                    Logger.Warn("Timeout querying taskbar XAML element: " + elementName);
+                    // 有上一轮的结果就先用着：直接返回「拿不到」会让调用方退回无偏移的位置，
+                    // 播放中每帧一来，小组件就在「按 Widgets 按钮偏移」和「x=20」之间来回跳。
+                    if (TryGetCachedElementRect(elementName, out var duringProbe))
+                        return (true, duringProbe);
+
                     return (false, Rect.Empty);
                 }
 
-                // Propagate any exception from the background thread
-                findTask.GetAwaiter().GetResult();
-                elementCache = found;
-            }
+                _pendingAutomationTasks.Remove(elementName);
 
-            if (elementCache == null) // widget most likely disabled
-                return (false, Rect.Empty);
-
-            try
-            {
-                if (_pendingAutomationTasks.TryGetValue(elementName, out var pendingTask) && !pendingTask.IsCompleted)
+                XamlProbeResult result;
+                try
+                {
+                    result = pending.GetAwaiter().GetResult();
+                }
+                catch (ElementNotAvailableException)
+                {
+                    // element became stale, reset cache
+                    elementCache = null;
+                    Logger.Warn("Taskbar XAML element became stale, resetting cache: " + elementName);
+                    return (false, Rect.Empty);
+                }
+                catch (COMException ex)
                 {
                     elementCache = null;
+                    Logger.Warn(ex, "COM error retrieving taskbar XAML element Rect: " + elementName);
                     return (false, Rect.Empty);
                 }
 
-                var cachedElement = elementCache;
-                var boundsTask = Task.Run(() => cachedElement.Current.BoundingRectangle);
-                _pendingAutomationTasks[elementName] = boundsTask;
+                elementCache = result.Element;
 
-                if (!boundsTask.Wait(500))
+                if (result.ElapsedMs >= SlowAutomationQueryMs)
                 {
-                    Logger.Warn("Timeout getting bounds for taskbar XAML element: " + elementName);
-                    elementCache = null;
-                    return (false, Rect.Empty);
+                    // 以前这条是 "Timeout querying…"。不阻塞之后它仍然是有用的信号：
+                    // 查询变慢说明 explorer 那边在忙，接下来大概率还会慢。
+                    Logger.Warn("Taskbar XAML element query was slow: " + elementName);
                 }
 
-                Rect elementRect = boundsTask.GetAwaiter().GetResult();
-
-                if (elementRect == Rect.Empty) // widget shown before but most likely disabled now
+                if (!result.Found || result.Rect == Rect.Empty)
                 {
-                    elementCache = null; // reset cache
+                    elementCache = null; // widget shown before but most likely disabled now
                     return (false, Rect.Empty);
                 }
 
-                return (true, elementRect);
+                if (!_lastAppliedElementRects.TryGetValue(elementName, out var lastApplied) || lastApplied != result.Rect)
+                {
+                    _lastAppliedElementRects[elementName] = result.Rect;
+                    ScheduleRepositionAfterProbe();
+                }
+
+                return (true, result.Rect);
             }
-            catch (ElementNotAvailableException)
+
+            long probeStarted = Stopwatch.GetTimestamp();
+            if (_lastProbeStarted.TryGetValue(elementName, out var previousProbe) &&
+                Stopwatch.GetElapsedTime(previousProbe, probeStarted) < ProbeCooldown)
             {
-                // element became stale, reset cache
-                Logger.Warn("Taskbar XAML element became stale, resetting cache: " + elementName);
-                elementCache = null;
+                // 冷却中：不发新查询，沿用上一轮结果（没有就按拿不到处理）。
+                if (TryGetCachedElementRect(elementName, out var cooled))
+                    return (true, cooled);
+
                 return (false, Rect.Empty);
             }
-        }
-        catch (COMException ex)
-        {
-            Logger.Warn(ex, "COM error retrieving taskbar XAML element Rect: " + elementName);
-            elementCache = null; // reset cache on error
-            return (false, Rect.Empty);
-        }
-        catch (ElementNotAvailableException)
-        {
-            Logger.Warn("Taskbar XAML element not available, resetting cache: " + elementName);
-            elementCache = null;
-            return (false, Rect.Empty);
+
+            _lastProbeStarted[elementName] = probeStarted;
+            StartElementProbe(taskbarHandle, elementName, elementCache);
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Error retrieving taskbar XAML element Rect: " + elementName);
             elementCache = null; // reset cache on error
-            return (false, Rect.Empty);
+            Logger.Error(ex, "Error retrieving taskbar XAML element Rect: " + elementName);
         }
+
+        return (false, Rect.Empty);
+    }
+
+    /// <summary>上一次**据以排版过**的矩形。用于探测在途/冷却期间顶替返回值。</summary>
+    private bool TryGetCachedElementRect(string elementName, out Rect rect) =>
+        _lastAppliedElementRects.TryGetValue(elementName, out rect);
+
+    /// <summary>
+    /// 起一次 XAML 探测，**不等结果**。每个元素同时最多一个在途。
+    /// </summary>
+    /// <remarks>
+    /// 找元素与取边界合成一个任务而不是两段：合成之后「冷启动到拿到矩形」只需
+    /// 一次收割，不会像原来那样中间还要再等一轮心跳。
+    /// </remarks>
+    private void StartElementProbe(IntPtr taskbarHandle, string elementName, AutomationElement? knownElement)
+    {
+        long started = Stopwatch.GetTimestamp();
+
+        _pendingAutomationTasks[elementName] = Task.Run(() =>
+        {
+            AutomationElement? element = knownElement;
+
+            if (element is null)
+            {
+                var root = AutomationElement.FromHandle(taskbarHandle);
+                element = root.FindFirst(
+                    TreeScope.Descendants,
+                    new PropertyCondition(AutomationElement.AutomationIdProperty, elementName));
+            }
+
+            if (element is null)
+                return new XamlProbeResult(false, Rect.Empty, null, ElapsedMilliseconds(started));
+
+            return new XamlProbeResult(true, element.Current.BoundingRectangle, element, ElapsedMilliseconds(started));
+        });
+    }
+
+    private static long ElapsedMilliseconds(long startedTimestamp) =>
+        (long)Stopwatch.GetElapsedTime(startedTimestamp).TotalMilliseconds;
+
+    /// <summary>
+    /// 探测拿到**变化过的**矩形之后叫醒一次重排。
+    /// </summary>
+    /// <remarks>
+    /// 这是「事件驱动」替代「同步等待」的落点：以前调用方在 UI 线程上等结果，
+    /// 拿到矩形的代价是锁住线程；现在结果什么时候到、什么时候补一次。
+    /// 不会失控——只有矩形变了才走到这里，而稳态下矩形不变。
+    /// </remarks>
+    private void ScheduleRepositionAfterProbe()
+    {
+        if (_isClosing)
+            return;
+
+        Dispatcher.BeginInvoke(
+            () =>
+            {
+                if (!_isClosing)
+                    UpdatePosition(RepositionReason.WidgetProbe);
+            },
+            DispatcherPriority.Background);
     }
 
     /// <summary>
@@ -1735,6 +1882,8 @@ on_error:
         _trayElement = null;
         _taskbarFrameElement = null;
         _pendingAutomationTasks.Clear();
+        _lastAppliedElementRects.Clear();
+        _lastProbeStarted.Clear();
         base.OnClosed(e);
     }
 }

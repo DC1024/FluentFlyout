@@ -13,8 +13,8 @@ namespace FluentFlyout.Lyrics.Diagnostics;
 /// <remarks>
 /// <para>
 /// 为什么需要它：一次 <c>UpdatePosition</c> 不是「重画一遍」那么便宜——里面有
-/// 跨进程 UIA 查询（单个最坏 1500ms 超时）、<c>SetWindowPos</c> 与
-/// <c>SetWindowRgn</c>。在装了 Nilesoft Shell / Windhawk 的机器上，每秒几十次
+/// 跨进程 UIA 查询（探测已改为非阻塞，但每次重排仍要发起一轮）、<c>SetWindowPos</c>
+/// 与 <c>SetWindowRgn</c>。在装了 Nilesoft Shell / Windhawk 的机器上，每秒几十次
 /// 会把整条任务栏拖住。这类回归**在截图上完全看不出来**，只能靠计数发现。
 /// </para>
 /// <para>
